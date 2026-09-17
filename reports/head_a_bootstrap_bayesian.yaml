@@ -1,0 +1,9 @@
+model: primary_hierarchical_bayesian_weibull_aft
+apparent_c_index: 0.6111111111111112
+bootstrap_corrected_c_index: 0.587843897222242
+ci_95_low: 0.4166402116402117
+ci_95_high: 0.734870071684588
+n_resamples_used: 200
+B: 200
+method_note: Bootstrap resamples fit via MAP (not full MCMC) for tractability; apparent
+  C-index uses the full-MCMC posterior. See module docstring.
