@@ -93,14 +93,21 @@
 > Final numbers below are from the physician-confirmed 8-event cohort — see `reports/head_a_validation_report.md`
 > Level 3 for the full table and CIs.
 
-- Bootstrap-corrected C-index (Harrell optimism correction, 95% CI — not a naive point estimate): [FINAL NUMBERS —
-  fill in from `reports/head_a_validation_report.md` Level 3 once the B=100 full-MCMC Bayesian bootstrap and B=500
-  frequentist-comparator bootstrap finish running on the final 8-event cohort].
-- Honest read, shown explicitly, not hidden: with only 8 confirmed events, these intervals are wide. The
-  literature-only model scoring at or below chance on our own cohort is itself a key finding: it's why a Bayesian
-  update, not literature transfer alone, is the right framing. A stated compute-time asymmetry (B=100 for the
-  primary Bayesian model vs. B=500 for the frequentist comparators) is flagged directly next to the results table,
-  not buried in a footnote.
+- Bootstrap-corrected C-index (Harrell optimism correction, 95% CI — not a naive point estimate): primary Bayesian
+  model **0.618 apparent → 0.554 corrected, 95% CI [0.353, 0.771]** vs. penalized Cox 0.536 CI [0.467, 0.573],
+  XGBoost AFT 0.497 CI [0.436, 0.513], literature-only 0.493 (essentially chance, not bootstrapped). Plainly: in
+  about **55 of 100 random pairwise patient comparisons**, the model correctly ranked who failed first.
+- Honest read, shown explicitly, not hidden: with only 8 confirmed events, these intervals are wide — the primary
+  model's own 95% CI spans worse-than-chance to fairly strong. The literature-only model scoring at chance on our
+  own cohort is itself a key finding: it's why a Bayesian update, not literature transfer alone, is the right
+  framing. A stated compute-time asymmetry (B=100 for the primary Bayesian model vs. B=500 for the frequentist
+  comparators) is flagged directly next to the results table, not buried in a footnote.
+- Case-level check (n=8, indicative only): of the 8 confirmed-event patients, **3 had their actual event fall
+  inside the model's own 80% credible interval** for predicted median survival time — consistent with the Level 5
+  simulation study's own under-coverage finding (48-56% observed vs. 80% nominal), not a new surprise.
+- Reintervention detector (Head B), final after full physician reconciliation: **F1 = 0.889** (precision 0.800,
+  recall 1.000 — the automated detector found all 8 true reinterventions, with 2 false positives caught and
+  corrected by physician review).
 - SHAP/forest-plot outputs available (`reports/head_a_forest_plot.png`, `head_a_shap_summary.png`), reported with
   an explicit `tau_family` pooling-artifact caveat (Level 5 simulation study) on any family-level claim.
 

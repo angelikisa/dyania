@@ -1,12 +1,12 @@
 model: primary_hierarchical_bayesian_weibull_aft
-apparent_c_index: 0.6111111111111112
-bootstrap_corrected_c_index: 0.5913921476633814
-ci_95_low: 0.4366929945054946
-ci_95_high: 0.7252394636015327
+apparent_c_index: 0.618421052631579
+bootstrap_corrected_c_index: 0.553775460892795
+ci_95_low: 0.3534185641408486
+ci_95_high: 0.7707587719298242
 n_resamples_used: 100
 B: 100
-mean_max_rhat: 1.0220690943512099
-mean_n_divergences: 87.56
+mean_max_rhat: 1.0220111402155403
+mean_n_divergences: 92.98
 method_note: 'Bootstrap resamples fit via the SAME full 4-chain 2000-tune+2000-draw
   MCMC procedure as the apparent model (no MAP shortcut) -- methodologically identical
   to the apparent fit and to how the other 4 comparators were bootstrapped. B=100,
