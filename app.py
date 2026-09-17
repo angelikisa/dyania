@@ -26,7 +26,7 @@ EVIDENCE_COLUMNS = (
     ("Alternative mechanism evidence", "exclusion_reason"),
 )
 
-st.set_page_config(page_title="Valve Durability | Dyania", page_icon="D", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="ValveVie | Valve Durability", page_icon="V", layout="wide", initial_sidebar_state="collapsed")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 
 
@@ -157,8 +157,8 @@ def follow_up_plan(risk: float, patient: PatientRecord) -> tuple[str, str, str, 
 
 def stage_track(patient: PatientRecord) -> str:
     names = ("No detected deterioration", "Morphological change", "Moderate HVD", "Severe HVD")
-    return '<div class="stage-track">' + "".join(
-        f'<div class="stage {"active" if index == patient.hvd_stage else ""}"><div class="stage-num">Stage {index}</div><div class="stage-name">{safe(name)}</div></div>'
+    return '<div class="stage-progress">' + "".join(
+        f'<div class="stage-step {"active" if index == patient.hvd_stage else ""}"><div class="stage-dot">{index}</div><div class="stage-name">{safe(name)}</div></div>'
         for index, name in enumerate(names)
     ) + "</div>"
 
@@ -168,8 +168,8 @@ def patient_facts(patient: PatientRecord) -> str:
     facts = (("Approach", patient.approach or "Unavailable"), ("Valve", patient.valve_model or "Unavailable"),
              ("Size", size), ("Implant year", patient.index_implant_year or "Unavailable"),
              ("Latest note", patient.last_note_year or "Unavailable"), ("Evidence", patient.confidence_tier.title()))
-    return '<div class="fact-grid">' + "".join(
-        f'<div class="fact"><div class="fact-label">{safe(label)}</div><div class="fact-value">{safe(value)}</div></div>'
+    return '<div class="facts">' + "".join(
+        f'<div class="fact">{safe(label)}<strong>{safe(value)}</strong></div>'
         for label, value in facts
     ) + "</div>"
 
@@ -178,7 +178,9 @@ def factor_rows(prediction: DurabilityPrediction) -> str:
     rows = []
     for factor in prediction.factors:
         ratio = factor.ratio
-        if not factor.applied:
+        if factor.key == "approach" and abs(ratio.median - 1.0) < 0.01:
+            direction = "Reference category"
+        elif not factor.applied:
             direction = "Reference value"
         elif ratio.median < 0.98:
             direction = "Reduces modeled durability"
@@ -205,11 +207,10 @@ def detected_flag_rows(patient: PatientRecord) -> str:
 repository = get_repository(str(ROOT))
 patient_ids = repository.available_patient_ids(model_eligible_only=True)
 
-st.markdown('<div class="nav"><div class="nav-brand">DY<span>A</span>NIA</div><div class="nav-links"><div class="nav-active">Patient review</div><div>Model evidence</div><div>About</div></div></div>', unsafe_allow_html=True)
-st.markdown('<div class="page-intro"><div><div class="page-title">Bioprosthetic valve durability</div><div class="page-subtitle">Upload longitudinal notes to review present valve status, expected durability and the factors supporting the estimate.</div></div><div class="prototype-note">De-identified data · Physician review required</div></div>', unsafe_allow_html=True)
+st.markdown('<div class="nav"><div class="brand"><span class="brand-mark"></span>ValveVie</div><div class="nav-links"><a class="active" href="#assessment">Assessment</a><a href="#outlook">Outlook</a><a href="#follow-up">Follow-up</a></div></div>', unsafe_allow_html=True)
 
-st.markdown('<div class="input-panel"><div class="input-title">Upload clinical notes</div><div class="input-copy">The deterministic NLP pipeline will extract implant details, hemodynamic findings and alternative mechanisms.</div>', unsafe_allow_html=True)
-uploaded = st.file_uploader("Longitudinal notes workbook", type=["xlsx"], help="Required columns: Profile Key, Type, Notes, Service Date. Upload de-identified data only.")
+with st.popover("Load patient notes"):
+    uploaded = st.file_uploader("Notes workbook", type=["xlsx"], help="Columns: Profile Key, Type, Notes, Service Date. De-identified data only.")
 
 patient: PatientRecord
 audit: AuditSummary
@@ -231,12 +232,16 @@ if uploaded is not None:
             st.code(str(exc))
         st.stop()
 else:
-    with st.expander("Preview with a de-identified sample"):
-        selected_id = st.selectbox("Sample patient", patient_ids, format_func=lambda pid: repository.patient(pid).display_label)
+    selected_id = "Patient_030" if "Patient_030" in patient_ids else patient_ids[0]
     patient = repository.patient(selected_id)
     audit = repository.audit_summary(selected_id)
 
-st.markdown(f'<div class="patient-line"><strong>{safe(patient.profile_key)}</strong> <span>· {safe(patient.approach or "Approach unavailable")} · {safe(patient.valve_model or "Valve unavailable")} · {safe(patient.years_followup or 0)} years observed</span></div></div>', unsafe_allow_html=True)
+st.markdown(
+    f'<div class="case-head" id="assessment"><div><div class="case-title">Valve durability assessment</div>'
+    f'<div class="case-meta">{safe(patient.profile_key)} · {safe(patient.approach or "Approach unavailable")} · {safe(patient.valve_model or "Valve unavailable")} · {safe(patient.years_followup or 0)} years observed</div></div>'
+    f'<div class="case-status">Stage {patient.hvd_stage} · {safe(patient.confidence_tier.title())} evidence</div></div>',
+    unsafe_allow_html=True,
+)
 
 prediction: DurabilityPrediction | None = None
 prediction_error: str | None = None
@@ -256,38 +261,39 @@ if prediction is None:
 else:
     five_year = prediction.conditional_risk_by_horizon[5]
     category = risk_category(five_year.median, patient)
-    interval, examination, basis, review_year = follow_up_plan(five_year.median, patient)
+    interval, examination, basis, _review_year = follow_up_plan(five_year.median, patient)
+    remaining = prediction.remaining_median_years
     st.markdown(
         '<div class="summary">'
-        f'<div class="summary-main"><div class="summary-label">Estimated valve durability</div><div class="summary-value">{prediction.median_event_free_years.median:.1f} years</div><div class="summary-detail">Median modeled time free from the study endpoint after implantation<br>Uncertainty interval {prediction.median_event_free_years.low:.1f}–{prediction.median_event_free_years.high:.1f} years</div></div>'
-        f'<div class="summary-side"><div class="summary-label">Current valve state</div><div class="summary-value">Stage {patient.hvd_stage}</div><div class="summary-detail">{safe(patient.current_state_label)}<br>{safe(patient.confidence_tier.title())} evidence</div></div>'
-        f'<div class="summary-side"><div class="summary-label">Risk context</div><div class="summary-value">{safe(category)}</div><div class="summary-detail">{pct(five_year.median)} modeled endpoint risk over the next 5 years</div><div class="risk-note">The 5-year horizon provides a common comparison window; it does not determine treatment by itself.</div></div></div>',
+        f'<div class="summary-main"><div class="eyebrow">Estimated remaining durability</div><div class="hero-value">{remaining.median:.1f} years</div><div class="detail">Median model estimate from the latest event-free follow-up<br>Uncertainty interval {remaining.low:.1f}–{remaining.high:.1f} years</div></div>'
+        f'<div class="summary-side"><div class="eyebrow">Current valve state</div><div class="side-value">Stage {patient.hvd_stage}</div><div class="detail">{safe(patient.current_state_label)}<br>{safe(patient.confidence_tier.title())} evidence</div></div>'
+        f'<div class="summary-side"><div class="eyebrow">Five-year context</div><div class="side-value">{pct(five_year.median)}</div><div class="detail">Modeled endpoint risk · {safe(category.lower())} category</div><div class="risk-explain">A standardized horizon for comparison, not a treatment threshold.</div></div></div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section">' + section_header("What shaped this estimate", "Direct explanation of the fitted durability model"), unsafe_allow_html=True)
-    st.markdown(factor_rows(prediction) + '<div class="method-note">These are the three inputs used by the current Head A model. Effects are shown on the accelerated-failure-time scale and include posterior uncertainty.</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="content-section">' + section_header("Drivers of the estimate", "Patient-specific model contribution"), unsafe_allow_html=True)
+    st.markdown('<div class="factor-list">' + factor_rows(prediction) + '</div><div class="method-note">Time ratios describe how each input shifts modeled durability. They are associations with posterior uncertainty, not causal effects.</div></div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section">' + section_header("Current valve status", "Findings extracted from the longitudinal record"), unsafe_allow_html=True)
+    st.markdown('<div class="content-section">' + section_header("Valve status", "Current hemodynamic deterioration stage"), unsafe_allow_html=True)
     st.markdown(stage_track(patient), unsafe_allow_html=True)
     st.markdown(patient_facts(patient), unsafe_allow_html=True)
     st.markdown(f'<div class="evidence"><strong>Why this stage:</strong> {safe(patient.rationale)}</div></div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section">' + section_header("Durability outlook", "How to read it: right = later in time · higher = more likely to remain event-free"), unsafe_allow_html=True)
-    st.plotly_chart(valve_outlook_curve(prediction, review_year=review_year), width="stretch", config={"displayModeBar": False, "responsive": True})
-    st.markdown('<div class="method-note"><strong>Teal:</strong> this patient profile. <strong>Grey dashed:</strong> model reference with the same implant approach. <strong>Shaded area:</strong> uncertainty. The vertical marker is the suggested reassessment point, not a predicted operation date.</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="content-section" id="outlook">' + section_header("Durability outlook", "X-axis: time from today · Y-axis: probability of remaining free from valve failure"), unsafe_allow_html=True)
+    st.plotly_chart(valve_outlook_curve(prediction, median_year=remaining.median), width="stretch", config={"displayModeBar": False, "responsive": True})
+    st.markdown('<div class="chart-guide"><span><i class="legend-line"></i>Patient estimate</span><span><i class="legend-line grey"></i>Approach-matched reference</span><span><i class="legend-band"></i>Uncertainty interval</span></div><div class="method-note">The vertical marker is where the patient curve reaches 50% event-free probability: the model\'s median remaining-durability estimate. It is not a recommendation or predicted date for surgery.</div></div>', unsafe_allow_html=True)
 
     detected_flags = detected_flag_rows(patient)
     if detected_flags:
-        st.markdown('<div class="section">' + section_header("Additional findings to review", "Alternative mechanisms detected in the notes"), unsafe_allow_html=True)
+        st.markdown('<div class="content-section">' + section_header("Additional findings", "Alternative mechanisms detected in the notes"), unsafe_allow_html=True)
         st.markdown(detected_flags + '</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section">' + section_header("Next review", "Suggested window · treating clinician confirms or overrides"), unsafe_allow_html=True)
+    st.markdown('<div class="content-section" id="follow-up">' + section_header("Next review", "Treating clinician confirms or overrides"), unsafe_allow_html=True)
     st.markdown(
-        '<div class="followup-grid">'
-        f'<div class="followup-cell"><div class="followup-label">When</div><div class="followup-value">{safe(interval)}</div></div>'
-        f'<div class="followup-cell"><div class="followup-label">Assessment</div><div class="followup-value">{safe(examination)}</div></div>'
-        f'<div class="followup-cell"><div class="followup-label">Why</div><div class="followup-value">{safe(basis)}</div></div></div>'
+        '<div class="followup">'
+        f'<div class="followup-item"><div class="followup-label">When</div><div class="followup-value">{safe(interval)}</div></div>'
+        f'<div class="followup-item"><div class="followup-label">Assessment</div><div class="followup-value">{safe(examination)}</div></div>'
+        f'<div class="followup-item"><div class="followup-label">Clinical basis</div><div class="followup-value">{safe(basis)}</div></div></div>'
         '<div class="followup-foot">Decision-support output only. Symptoms, new examination findings and clinician judgement take priority over this interval.</div></div>',
         unsafe_allow_html=True,
     )
@@ -304,4 +310,4 @@ with st.expander("Evidence and model limitations"):
 
 summary = build_research_summary(patient, prediction, audit)
 st.download_button("Download case summary", data=summary, file_name=f"{patient.profile_key.lower()}_valve_review.md", mime="text/markdown")
-st.markdown('<div class="footer-note">DYANIA · Valve durability decision support · De-identified data only</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-note">ValveVie · Valve durability decision support</div>', unsafe_allow_html=True)

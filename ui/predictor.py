@@ -67,6 +67,7 @@ class DurabilityPrediction:
     reference_event_free_median: np.ndarray
     conditional_risk_by_horizon: Mapping[int, IntervalSummary]
     landmark_years: float
+    remaining_median_years: IntervalSummary
     median_event_free_years: IntervalSummary
     scale_years: IntervalSummary
     risk_by_year: Mapping[int, IntervalSummary]
@@ -264,6 +265,13 @@ def predict_durability(
         )
         conditional_risk_by_horizon[horizon] = _summary(1.0 - np.exp(-delta_hazard))
 
+    # Posterior time from the landmark until conditional survival reaches
+    # 50%: solve S(t0 + h) / S(t0) = 0.5 for h in every posterior draw.
+    remaining_median = np.power(
+        np.power(landmark, k[:n]) + np.log(2.0) * np.power(scale, k[:n]),
+        1.0 / k[:n],
+    ) - landmark
+
     if "SAVR" in posterior.approach_effects:
         savr = _flatten(posterior.approach_effects["SAVR"])
         mu_for_ratio, savr = _same_length(mu[:n], savr)
@@ -334,6 +342,7 @@ def predict_durability(
         reference_event_free_median=reference_event_free_median,
         conditional_risk_by_horizon=conditional_risk_by_horizon,
         landmark_years=landmark,
+        remaining_median_years=_summary(remaining_median),
         median_event_free_years=_summary(median_event_free),
         scale_years=_summary(scale),
         risk_by_year=risk_by_year,

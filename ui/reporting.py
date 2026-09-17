@@ -23,7 +23,7 @@ def build_research_summary(
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     size = f"{patient.valve_size_mm:g} mm" if patient.valve_size_mm is not None else "Unavailable"
     lines = [
-        "# AVR Durability Research Summary",
+        "# ValveVie Case Summary",
         "",
         f"Generated: {generated}",
         "",
@@ -47,14 +47,19 @@ def build_research_summary(
     ]
 
     if prediction is not None:
-        risk_5 = prediction.risk_by_year.get(5)
+        risk_5 = prediction.conditional_risk_by_horizon.get(5)
         lines.extend(["", "## Durability forecast (Head A)", ""])
         if risk_5:
             lines.append(
-                "- 5-year modeled endpoint probability: "
+                "- Modeled endpoint probability over the next 5 years: "
                 + _interval_pct(risk_5.median, risk_5.low, risk_5.high)
             )
         m = prediction.median_event_free_years
+        remaining = prediction.remaining_median_years
+        lines.append(
+            f"- Median remaining event-free time from latest follow-up: {remaining.median:.1f} years "
+            f"(89% CrI {remaining.low:.1f}–{remaining.high:.1f})"
+        )
         lines.append(
             f"- Posterior median event-free time: {m.median:.1f} years "
             f"(89% CrI {m.low:.1f}–{m.high:.1f})"

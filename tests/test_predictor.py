@@ -51,6 +51,8 @@ def test_conditional_forecast_starts_at_one_and_declines():
     assert np.isclose(result.conditional_event_free_median[0], 1.0)
     assert np.isclose(result.reference_event_free_median[0], 1.0)
     assert np.all(np.diff(result.conditional_event_free_median) <= 1e-12)
+    assert result.remaining_median_years.median > 0
+    assert result.remaining_median_years.median < result.median_event_free_years.median
 
 
 def test_time_ratio_decomposition_matches_aft_parameterization():
