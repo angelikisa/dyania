@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 
 import pandas as pd
 import streamlit as st
@@ -81,10 +81,10 @@ def process_notes_file(file_bytes: bytes, filename: str) -> tuple[pd.DataFrame, 
     if not required.issubset(frame.columns):
         raise ValueError(f"Missing columns: {', '.join(sorted(required - set(frame.columns)))}")
 
-    with NamedTemporaryFile(suffix=".xlsx") as temporary:
-        frame.to_excel(temporary.name, index=False)
-        temporary.flush()
-        return run_pipeline(temporary.name)
+    with TemporaryDirectory() as directory:
+        temporary_path = Path(directory) / "uploaded_notes.xlsx"
+        frame.to_excel(temporary_path, index=False)
+        return run_pipeline(str(temporary_path))
 
 
 def optional_text(value) -> str | None:
