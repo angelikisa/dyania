@@ -60,6 +60,13 @@ class DurabilityPrediction:
     risk_median: np.ndarray
     risk_low: np.ndarray
     risk_high: np.ndarray
+    forecast_times: np.ndarray
+    conditional_event_free_median: np.ndarray
+    conditional_event_free_low: np.ndarray
+    conditional_event_free_high: np.ndarray
+    reference_event_free_median: np.ndarray
+    conditional_risk_by_horizon: Mapping[int, IntervalSummary]
+    landmark_years: float
     median_event_free_years: IntervalSummary
     scale_years: IntervalSummary
     risk_by_year: Mapping[int, IntervalSummary]
@@ -153,6 +160,8 @@ def predict_durability(
     ppm_proxy_flag: bool,
     size_known: bool,
     horizon_years: int = 15,
+    observed_event_free_years: float = 0.0,
+    forecast_horizon_years: int = 10,
     grid_points: int = 181,
 ) -> DurabilityPrediction:
     """Generate a patient-level posterior durability forecast.
@@ -211,6 +220,49 @@ def predict_durability(
     for year in report_years:
         yearly_risk = 1.0 - np.exp(-np.power(year / scale, k[:n]))
         risk_by_year[year] = _summary(yearly_risk)
+
+    # Clinically useful forecast: probability from the patient's most recent
+    # event-free observation, not simply from the original implant date.
+    # For a Weibull model this is S(t0 + h) / S(t0). The UI never applies this
+    # to profiles whose endpoint has already occurred.
+    landmark = max(float(observed_event_free_years or 0.0), 0.0)
+    forecast_times = np.linspace(0.0, float(forecast_horizon_years), 121)
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        baseline_hazard = np.power(landmark / scale, k[:n])
+        future_hazard = np.power(
+            (landmark + forecast_times[None, :]) / scale[:, None],
+            k[:n, None],
+        )
+        conditional_event_free = np.exp(-(future_hazard - baseline_hazard[:, None]))
+    conditional_event_free = np.clip(conditional_event_free, 0.0, 1.0)
+    conditional_event_free_median = np.nanquantile(conditional_event_free, 0.5, axis=0)
+    conditional_event_free_low = np.nanquantile(conditional_event_free, CI_LOW, axis=0)
+    conditional_event_free_high = np.nanquantile(conditional_event_free, CI_HIGH, axis=0)
+
+    # Approach-matched reference: same posterior approach effect, with no
+    # family offset and the labelled-size PPM proxy off.
+    reference_scale = np.exp(mu[:n])
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        reference_baseline_hazard = np.power(landmark / reference_scale, k[:n])
+        reference_future_hazard = np.power(
+            (landmark + forecast_times[None, :]) / reference_scale[:, None],
+            k[:n, None],
+        )
+        reference_event_free = np.exp(
+            -(reference_future_hazard - reference_baseline_hazard[:, None])
+        )
+    reference_event_free = np.clip(reference_event_free, 0.0, 1.0)
+    reference_event_free_median = np.nanquantile(reference_event_free, 0.5, axis=0)
+
+    conditional_risk_by_horizon: dict[int, IntervalSummary] = {}
+    for horizon in (1, 3, 5, 10):
+        if horizon > forecast_horizon_years:
+            continue
+        delta_hazard = (
+            np.power((landmark + horizon) / scale, k[:n])
+            - np.power(landmark / scale, k[:n])
+        )
+        conditional_risk_by_horizon[horizon] = _summary(1.0 - np.exp(-delta_hazard))
 
     if "SAVR" in posterior.approach_effects:
         savr = _flatten(posterior.approach_effects["SAVR"])
@@ -275,6 +327,13 @@ def predict_durability(
         risk_median=risk_median,
         risk_low=risk_low,
         risk_high=risk_high,
+        forecast_times=forecast_times,
+        conditional_event_free_median=conditional_event_free_median,
+        conditional_event_free_low=conditional_event_free_low,
+        conditional_event_free_high=conditional_event_free_high,
+        reference_event_free_median=reference_event_free_median,
+        conditional_risk_by_horizon=conditional_risk_by_horizon,
+        landmark_years=landmark,
         median_event_free_years=_summary(median_event_free),
         scale_years=_summary(scale),
         risk_by_year=risk_by_year,

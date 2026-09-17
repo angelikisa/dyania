@@ -1,37 +1,23 @@
-"""Dyania AVR durability clinical-research dashboard.
-
-Run from the repository root with:
-    streamlit run app.py
-"""
+"""Single-page clinical review interface for the Dyania research prototype."""
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from ui.charts import durability_curve, time_ratio_forest, validation_comparison
+from ui.charts import valve_outlook_curve
 from ui.data import ClinicalDataRepository, PatientRecord
-from ui.predictor import (
-    DurabilityPrediction,
-    PredictionUnavailable,
-    load_posterior,
-    predict_durability,
-)
+from ui.predictor import DurabilityPrediction, PredictionUnavailable, load_posterior, predict_durability
 from ui.reporting import build_research_summary
-from ui.styles import APP_CSS, badge, evidence_item, key_value_grid, metric_card, safe
+from ui.styles import APP_CSS, metric, safe, section_header
 
 
 ROOT = Path(__file__).resolve().parent
 POSTERIOR_PATH = ROOT / "reports" / "head_a_posterior.nc"
 
-
-st.set_page_config(
-    page_title="AVR Durability Assessment | Dyania",
-    page_icon="🫀",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Valve Durability Review | Dyania", page_icon="D", layout="wide", initial_sidebar_state="collapsed")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 
 
@@ -40,501 +26,214 @@ def get_repository(root: str) -> ClinicalDataRepository:
     return ClinicalDataRepository(root)
 
 
-@st.cache_resource(show_spinner="Loading Bayesian posterior…")
+@st.cache_resource(show_spinner="Loading durability model…")
 def get_posterior(path: str):
     return load_posterior(path)
 
 
-def fmt_number(value: float | None, *, digits: int = 1, suffix: str = "") -> str:
-    if value is None:
-        return "Unavailable"
-    return f"{value:.{digits}f}{suffix}"
-
-
-def fmt_pct(value: float) -> str:
+def pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
-def risk_interval(prediction: DurabilityPrediction, year: int) -> tuple[str, str]:
-    summary = prediction.risk_by_year[year]
-    return fmt_pct(summary.median), f"89% CrI {fmt_pct(summary.low)}–{fmt_pct(summary.high)}"
+def risk_category(risk: float, patient: PatientRecord) -> tuple[str, str]:
+    if risk > 0.15 or patient.hvd_stage >= 3:
+        return "High", "critical"
+    if risk >= 0.05 or patient.hvd_stage == 2:
+        return "Moderate", "warning"
+    return "Low", ""
 
 
-def confidence_tone(confidence: str) -> str:
-    return {
-        "definite": "teal",
-        "probable": "amber",
-        "possible": "amber",
-        "excluded": "coral",
-        "censored": "neutral",
-    }.get(confidence.lower(), "neutral")
+def follow_up_plan(risk: float, patient: PatientRecord) -> tuple[str, str, str]:
+    flags = patient.alternative_mechanism_flags()
+    thrombosis_signal = any(flag.detected and flag.label == "Thrombosis / HALT" for flag in flags)
+    delta = patient.gradient_delta
+    rapid_gradient = delta is not None and delta >= 10
+    if patient.event or patient.bvf_stage >= 2:
+        return "Clinical endpoint review", "Confirm the recorded valve-failure or reintervention event", "No automated future interval"
+    if risk > 0.15 or patient.hvd_stage >= 3 or rapid_gradient:
+        test = "TTE and prompt specialist review"
+        if thrombosis_signal:
+            test += "; consider 4D cardiac CT/TEE for suspected thrombosis"
+        return "Within 6 months", test, "Higher-risk research-protocol pathway"
+    if risk >= 0.05 or patient.hvd_stage == 2:
+        interval = "Within 6 months" if rapid_gradient else "Within 12 months"
+        return interval, "TTE; stress echo only if clinically indicated", "Moderate-risk research-protocol pathway"
+    return "Standard surveillance", "TTE according to the treating team's prosthetic-valve schedule", "No model-driven shortening of follow-up"
 
 
-def state_tone(patient: PatientRecord) -> str:
-    if patient.bvf_stage >= 2 or patient.hvd_stage >= 3:
-        return "danger"
-    if patient.hvd_stage >= 1:
-        return "warning"
-    return "accent"
+def stage_track(patient: PatientRecord) -> str:
+    names = ("No detected deterioration", "Morphological change", "Moderate HVD", "Severe HVD")
+    items = "".join(
+        f'<div class="stage {"active" if index == patient.hvd_stage else ""}">'
+        f'<div class="stage-num">Stage {index}</div><div class="stage-name">{safe(name)}</div></div>'
+        for index, name in enumerate(names)
+    )
+    return f'<div class="stage-track">{items}</div>'
 
 
-def stage_detail(patient: PatientRecord) -> str:
-    return f"{patient.phenotype_label} · {patient.confidence_tier.title()} evidence"
-
-
-def patient_inputs_html(patient: PatientRecord) -> str:
+def patient_facts(patient: PatientRecord) -> str:
     size = f"{patient.valve_size_mm:g} mm" if patient.valve_size_mm is not None else "Unavailable"
-    ppm = (
-        "Triggered (size <=21 mm)"
-        if patient.size_known and patient.ppm_proxy_flag
-        else "Not triggered"
-        if patient.size_known
-        else "Unavailable; model proxy defaults off"
+    facts = (
+        ("Implant approach", patient.approach or "Unavailable"),
+        ("Valve", patient.valve_model or "Unavailable"),
+        ("Labelled size", size),
+        ("Implant year", patient.index_implant_year or "Unavailable"),
+        ("Latest record", patient.last_note_year or "Unavailable"),
+        ("Evidence confidence", patient.confidence_tier.title()),
     )
-    return key_value_grid(
-        [
-            ("Index approach", patient.approach or "Unavailable"),
-            ("Valve model", patient.valve_model or "Unavailable"),
-            ("Valve family", (patient.valve_family or "Approach-level fallback").replace("_", " ")),
-            ("Labelled size", size),
-            ("PPM proxy", ppm),
-            ("Index year", str(patient.index_implant_year or "Unavailable")),
-        ]
-    )
+    return '<div class="fact-grid">' + "".join(
+        f'<div class="fact"><div class="fact-label">{safe(label)}</div><div class="fact-value">{safe(value)}</div></div>'
+        for label, value in facts
+    ) + "</div>"
+
+
+def factor_rows(prediction: DurabilityPrediction) -> str:
+    rows = []
+    for factor in prediction.factors:
+        ratio = factor.ratio
+        if not factor.applied:
+            direction = "Reference / not applied"
+        elif ratio.median < 0.98:
+            direction = "Shorter modeled durability"
+        elif ratio.median > 1.02:
+            direction = "Longer modeled durability"
+        else:
+            direction = "Near the reference"
+        rows.append(
+            '<div class="factor">'
+            f'<div><div class="factor-name">{safe(factor.label)}</div><div class="factor-copy">{safe(factor.description)}</div></div>'
+            f'<div class="factor-effect">{safe(direction)}<small>{ratio.median:.2f}× · 89% CrI {ratio.low:.2f}–{ratio.high:.2f}</small></div></div>'
+        )
+    return "".join(rows)
+
+
+def flag_rows(patient: PatientRecord) -> str:
+    rows = []
+    for flag in patient.alternative_mechanism_flags():
+        status = "Evidence detected" if flag.detected else "Not detected"
+        copy = flag.source if flag.source else flag.next_step
+        rows.append(
+            f'<div class="flag {"detected" if flag.detected else ""}"><div class="flag-dot"></div>'
+            f'<div><div class="flag-name">{safe(flag.label)}</div><div class="flag-copy">{safe(copy)}</div></div>'
+            f'<div class="flag-status">{safe(status)}</div></div>'
+        )
+    return "".join(rows)
 
 
 try:
-    repo = get_repository(str(ROOT))
+    repository = get_repository(str(ROOT))
 except Exception as exc:
-    st.error(
-        "The dashboard could not load the committed pipeline artifacts. "
-        "Run it from the repository root after generating labels.csv and the Head A inputs."
-    )
-    with st.expander("Technical detail"):
-        st.code(str(exc))
+    st.error("The committed pipeline artifacts could not be loaded. Run the application from the repository root.")
+    st.code(str(exc))
     st.stop()
 
-
-patient_ids = repo.available_patient_ids(model_eligible_only=True)
+patient_ids = repository.available_patient_ids(model_eligible_only=True)
 if not patient_ids:
-    st.error("No Head A-eligible de-identified patient profiles were found.")
+    st.error("No model-eligible de-identified profiles were found.")
     st.stop()
 
-featured_patient = "Patient_001" if "Patient_001" in patient_ids else patient_ids[0]
-if "patient_selector" not in st.session_state:
-    st.session_state.patient_selector = featured_patient
+st.markdown(
+    '<div class="app-header"><div class="app-kicker">Dyania · Clinical research interface</div>'
+    '<div class="app-title">Bioprosthetic valve durability review</div>'
+    '<div class="app-subtitle">A concise view of current valve status, modeled durability and the evidence behind the estimate.</div>'
+    '<div class="research-label">Research prototype · Not for clinical use</div></div>',
+    unsafe_allow_html=True,
+)
 
+st.markdown('<div class="surface"><div class="surface-title">Patient data</div>', unsafe_allow_html=True)
+input_col, upload_col = st.columns([1.25, 1], gap="large")
+with input_col:
+    selected_id = st.selectbox("Select a de-identified patient", patient_ids, format_func=lambda pid: repository.patient(pid).display_label)
+with upload_col:
+    uploaded = st.file_uploader("Or load a processed patient CSV", type=["csv"], help="The file must contain a profile_key present in the processed model artifacts.")
+    if uploaded is not None:
+        try:
+            uploaded_frame = pd.read_csv(BytesIO(uploaded.getvalue()))
+            if "profile_key" not in uploaded_frame.columns or uploaded_frame.empty:
+                st.warning("The uploaded CSV needs a non-empty profile_key column.")
+            else:
+                uploaded_key = str(uploaded_frame.iloc[0]["profile_key"])
+                if uploaded_key in patient_ids:
+                    selected_id = uploaded_key
+                    st.success(f"Loaded {uploaded_key} from the processed pipeline output.")
+                else:
+                    st.warning("This profile is not present in the current processed model artifacts.")
+        except Exception as exc:
+            st.warning(f"The CSV could not be read: {exc}")
 
-with st.sidebar:
-    st.markdown(
-        """
-        <div class="brand-lockup">
-          <div class="brand-name">DYANIA HEALTH</div>
-          <div class="brand-product">AVR Durability Assessment</div>
-          <div class="brand-sub">Traceable current-state phenotyping and Bayesian durability forecasting.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption("DE-IDENTIFIED RESEARCH COHORT")
-    if st.button("Load featured case", help="Open the curated demo profile from the pipeline output."):
-        st.session_state.patient_selector = featured_patient
-
-    selected_id = st.selectbox(
-        "Patient profile",
-        patient_ids,
-        key="patient_selector",
-        format_func=lambda pid: repo.patient(pid).display_label,
-    )
-    patient = repo.patient(selected_id)
-    audit = repo.audit_summary(selected_id)
-
-    st.markdown("---")
-    st.caption("SELECTED PROFILE")
-    st.markdown(f"**{safe(patient.profile_key)}**", unsafe_allow_html=True)
-    st.caption(
-        f"{patient.approach or 'Approach unavailable'} · "
-        f"{patient.valve_model or 'Valve model unavailable'} · "
-        f"{fmt_number(patient.valve_size_mm, digits=0, suffix=' mm')}"
-    )
-    st.markdown(
-        badge(patient.confidence_tier.title(), confidence_tone(patient.confidence_tier)),
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("---")
-    st.caption("DATA SCOPE")
-    st.caption(
-        f"{audit.total_notes} notes · {fmt_number(patient.years_followup, digits=1, suffix=' y')} observed follow-up"
-    )
-    st.caption("No patient name, age, or direct identifier is displayed.")
-
+patient = repository.patient(selected_id)
+audit = repository.audit_summary(selected_id)
+st.markdown(
+    f'<div class="patient-line"><strong>{safe(patient.profile_key)}</strong> <span>· {safe(patient.approach or "Approach unavailable")} · {safe(patient.valve_model or "Valve unavailable")} · {safe(patient.years_followup or 0):s} years observed follow-up</span></div></div>',
+    unsafe_allow_html=True,
+)
 
 prediction: DurabilityPrediction | None = None
 prediction_error: str | None = None
-try:
-    posterior = get_posterior(str(POSTERIOR_PATH))
-    prediction = predict_durability(
-        posterior,
-        approach=patient.approach or "",
-        valve_family=patient.valve_family,
-        family_known=patient.valve_family_known,
-        ppm_proxy_flag=patient.ppm_proxy_flag,
-        size_known=patient.size_known,
-    )
-except PredictionUnavailable as exc:
-    prediction_error = str(exc)
-except Exception as exc:  # defensive UI boundary
-    prediction_error = f"Unexpected posterior prediction error: {exc}"
-
-
-st.markdown(
-    """
-    <div class="page-header">
-      <div class="eyebrow">Clinical research decision support</div>
-      <div class="page-title">AVR durability assessment</div>
-      <div class="page-subtitle">A two-head view of current bioprosthetic valve status and future durability, with patient-level provenance and posterior uncertainty.</div>
-      <div class="header-rule"></div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="status-strip"><span class="status-dot"></span>'
-    '<strong>Research prototype</strong><span class="status-separator">·</span>'
-    '<span>Head B: deterministic VARC-3/Capodanno phenotyping</span>'
-    '<span class="status-separator">·</span>'
-    '<span>Head A: hierarchical Bayesian Weibull AFT</span>'
-    '<span class="status-separator">·</span><span>Not for clinical use</span></div>',
-    unsafe_allow_html=True,
-)
-
-
-summary_markdown = build_research_summary(patient, prediction, audit)
-download_col, meta_col = st.columns([1, 4], vertical_alignment="center")
-with download_col:
-    st.download_button(
-        "Download research summary",
-        data=summary_markdown,
-        file_name=f"{patient.profile_key.lower()}_avr_research_summary.md",
-        mime="text/markdown",
-        width="stretch",
-    )
-with meta_col:
-    st.caption(
-        f"Profile {patient.profile_key} · data through {patient.last_note_year or 'unknown'} · "
-        "posterior and extraction artifacts loaded read-only"
-    )
-
-
-overview_tab, explanation_tab, provenance_tab, evidence_tab = st.tabs(
-    ["Overview", "Why this prediction?", "Data & provenance", "Model & evidence"]
-)
-
-
-with overview_tab:
-    st.markdown("### Clinical snapshot")
-    metric_columns = st.columns(4)
-    if prediction is not None:
-        risk_value, risk_detail = risk_interval(prediction, 5)
-        median = prediction.median_event_free_years
-        median_value = f"{median.median:.1f} years"
-        median_detail = f"89% CrI {median.low:.1f}–{median.high:.1f} years"
-    else:
-        risk_value, risk_detail = "Unavailable", "Posterior artifact could not be evaluated"
-        median_value, median_detail = "Unavailable", "See model status below"
-
-    cards = [
-        ("5-year modeled endpoint probability", risk_value, risk_detail, "accent"),
-        ("Posterior median event-free time", median_value, median_detail, "accent"),
-        ("Current valve state", patient.endpoint_label, stage_detail(patient), state_tone(patient)),
-        (
-            "Evidence confidence",
-            patient.confidence_tier.title(),
-            f"Head B · {audit.post_implant_notes} post-implant notes assessed",
-            "warning" if patient.confidence_tier in {"probable", "possible"} else "neutral",
-        ),
-    ]
-    for column, card in zip(metric_columns, cards):
-        with column:
-            st.markdown(metric_card(*card), unsafe_allow_html=True)
-
-    st.markdown("")
-    chart_col, context_col = st.columns([2.15, 1], gap="large")
-    with chart_col:
-        st.markdown("#### Posterior durability trajectory")
-        if prediction is not None:
-            st.plotly_chart(
-                durability_curve(prediction, observed_followup=patient.years_followup),
-                width="stretch",
-                config={"displayModeBar": False, "responsive": True},
-            )
-            st.caption(
-                "The dashed endpoint curve is 1 − S(t) from Head A. It is not a competing-risk CIF; "
-                "all-cause mortality is not modeled in the current fitted head."
-            )
-        else:
-            st.warning("Head A prediction is unavailable for this run.")
-            with st.expander("Technical detail"):
-                st.code(prediction_error or "Unknown error")
-
-    with context_col:
-        st.markdown("#### Current assessment")
-        st.markdown(
-            '<div class="panel">'
-            f'<div class="panel-title">{safe(patient.endpoint_label)}</div>'
-            f'<div class="panel-copy">{safe(patient.rationale)}</div>'
-            '</div>',
-            unsafe_allow_html=True,
+if not patient.event and patient.bvf_stage < 2:
+    try:
+        prediction = predict_durability(
+            get_posterior(str(POSTERIOR_PATH)),
+            approach=patient.approach or "",
+            valve_family=patient.valve_family,
+            family_known=patient.valve_family_known,
+            ppm_proxy_flag=patient.ppm_proxy_flag,
+            size_known=patient.size_known,
+            observed_event_free_years=patient.years_followup or 0.0,
         )
-        st.markdown("#### Model inputs")
-        st.markdown(
-            f'<div class="panel">{patient_inputs_html(patient)}</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="callout info"><strong>Interpretation boundary.</strong> '
-            'This prototype communicates uncertainty and evidence provenance. It does not assign a surveillance interval or recommend treatment.</div>',
-            unsafe_allow_html=True,
-        )
+    except (PredictionUnavailable, Exception) as exc:
+        prediction_error = str(exc)
 
-    if prediction is not None:
-        st.markdown("#### Time-horizon summary")
-        rows = []
-        for year, summary in prediction.risk_by_year.items():
-            rows.append(
-                {
-                    "Horizon": f"{year} years",
-                    "Modeled endpoint probability": fmt_pct(summary.median),
-                    "89% credible interval": f"{fmt_pct(summary.low)} – {fmt_pct(summary.high)}",
-                    "Event-free probability": fmt_pct(1.0 - summary.median),
-                }
-            )
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+if prediction is not None:
+    five_year = prediction.conditional_risk_by_horizon[5]
+    category, tone = risk_category(five_year.median, patient)
+    main_columns = st.columns(3, gap="medium")
+    main_columns[0].markdown(metric("Estimated durability", f"{prediction.median_event_free_years.median:.1f} years", f"Median modeled endpoint-free time from implant · 89% CrI {prediction.median_event_free_years.low:.1f}–{prediction.median_event_free_years.high:.1f}"), unsafe_allow_html=True)
+    main_columns[1].markdown(metric("Risk in the next 5 years", pct(five_year.median), f"89% CrI {pct(five_year.low)}–{pct(five_year.high)} · from latest event-free follow-up", tone), unsafe_allow_html=True)
+    main_columns[2].markdown(metric("Risk category", category, f"Combines modeled risk with current HVD stage {patient.hvd_stage}", tone), unsafe_allow_html=True)
+else:
+    st.warning("A future durability forecast is not displayed because an endpoint is already recorded or the posterior prediction is unavailable.")
+    if prediction_error:
+        with st.expander("Technical detail"):
+            st.code(prediction_error)
 
+st.markdown('<div class="section">' + section_header("Current valve status", "Deterministic Head B assessment"), unsafe_allow_html=True)
+st.markdown(stage_track(patient), unsafe_allow_html=True)
+st.markdown(patient_facts(patient), unsafe_allow_html=True)
+st.markdown(f'<div class="evidence"><strong>Pipeline rationale:</strong> {safe(patient.rationale)}</div></div>', unsafe_allow_html=True)
 
-with explanation_tab:
-    st.markdown("### Patient-specific explanation")
-    st.caption(
-        "The primary model is explained directly on its accelerated-failure-time scale. "
-        "A time ratio above 1 corresponds to longer modeled durability; intervals crossing 1 indicate substantial uncertainty."
-    )
+if prediction is not None:
+    st.markdown('<div class="section">' + section_header("Valve durability outlook", "Patient profile vs approach-matched model reference"), unsafe_allow_html=True)
+    st.plotly_chart(valve_outlook_curve(prediction), width="stretch", config={"displayModeBar": False, "responsive": True})
+    st.markdown('<div class="method-note">The grey curve is a model-based reference with the same implant approach and no valve-family or small-valve modifier. It is not a population norm. The shaded area is posterior uncertainty; competing mortality is not modeled.</div></div>', unsafe_allow_html=True)
 
-    if prediction is None:
-        st.warning("The AFT decomposition requires the fitted posterior artifact.")
-    else:
-        figure_col, input_col = st.columns([1.65, 1], gap="large")
-        with figure_col:
-            st.plotly_chart(
-                time_ratio_forest(prediction),
-                width="stretch",
-                config={"displayModeBar": False, "responsive": True},
-            )
-            total = prediction.total_time_ratio
-            st.markdown(
-                '<div class="callout info">'
-                f'<strong>Combined patient time ratio: {total.median:.2f}x</strong> '
-                f'(89% CrI {total.low:.2f}–{total.high:.2f}x), relative to the SAVR approach reference '
-                'with no family offset and the PPM proxy off.</div>',
-                unsafe_allow_html=True,
-            )
-        with input_col:
-            st.markdown("#### What the model used")
-            factor_rows = []
-            for factor in prediction.factors:
-                factor_rows.append(
-                    {
-                        "Factor": factor.label,
-                        "Time ratio": f"{factor.ratio.median:.2f}x",
-                        "89% CrI": f"{factor.ratio.low:.2f}–{factor.ratio.high:.2f}x",
-                        "Status": "Applied" if factor.applied else "Reference / unavailable",
-                    }
-                )
-            st.dataframe(pd.DataFrame(factor_rows), hide_index=True, width="stretch")
-            st.markdown(
-                '<div class="callout"><strong>Associations, not causes.</strong> '
-                'The posterior is informed by a small cohort and literature priors. Direction and magnitude must not be interpreted as treatment effects.</div>',
-                unsafe_allow_html=True,
-            )
+    explain_col, flag_col = st.columns([1.15, 1], gap="large")
+    with explain_col:
+        st.markdown('<div class="section">' + section_header("Factors affecting this estimate", "Actual Head A inputs"), unsafe_allow_html=True)
+        st.markdown(factor_rows(prediction), unsafe_allow_html=True)
+        st.markdown('<div class="method-note">Time ratio above 1 indicates longer modeled durability; below 1 indicates shorter modeled durability. These are posterior associations, not causal effects.</div></div>', unsafe_allow_html=True)
+    with flag_col:
+        st.markdown('<div class="section">' + section_header("Alternative mechanism flags", "Text evidence · clinical review required"), unsafe_allow_html=True)
+        st.markdown(flag_rows(patient) + '</div>', unsafe_allow_html=True)
 
-    st.markdown("#### Why Head B assigned the current state")
+    interval, examination, pathway = follow_up_plan(five_year.median, patient)
+    st.markdown('<div class="section">' + section_header("Suggested follow-up window", "Research protocol suggestion · clinician confirmation required"), unsafe_allow_html=True)
     st.markdown(
-        f'<div class="panel"><div class="panel-copy">{safe(patient.rationale)}</div></div>',
+        f'<div class="followup"><div class="followup-title">{safe(interval)}</div>'
+        f'<div class="followup-copy"><strong>Assessment:</strong> {safe(examination)}<br><strong>Basis:</strong> {safe(pathway)}. The treating clinician should confirm or override this suggestion.</div></div></div>',
         unsafe_allow_html=True,
     )
-    if patient.evidence:
-        for label, text in patient.evidence:
-            st.markdown(evidence_item(label, text), unsafe_allow_html=True)
-    else:
-        st.info("No positive source-evidence span was emitted; this profile is supported by right-censoring or normal follow-up evidence.")
 
-
-with provenance_tab:
-    st.markdown("### End-to-end provenance")
-    st.caption("Every displayed result is linked to a committed pipeline artifact; the UI does not rerun or alter the models.")
-    pipeline_steps = [
-        ("01", "De-identified notes", "Operative reports and longitudinal progress notes"),
-        ("02", "Deterministic extraction", "Sectioning, negation, temporal attribution, valve dictionary"),
-        ("03", "Head B staging", "VARC-3 primary rules with documented Capodanno fallback"),
-        ("04", "Landmark features", "Approach, valve family and labelled-size PPM proxy"),
-        ("05", "Head A posterior", "Interval-censored hierarchical Bayesian Weibull AFT"),
-    ]
-    pipeline_html = "".join(
-        '<div class="pipeline-step">'
-        f'<div class="pipeline-index">{safe(index)}</div>'
-        f'<div class="pipeline-name">{safe(name)}</div>'
-        f'<div class="pipeline-copy">{safe(copy)}</div>'
-        '</div>'
-        for index, name, copy in pipeline_steps
-    )
-    st.markdown(f'<div class="pipeline">{pipeline_html}</div>', unsafe_allow_html=True)
-
-    st.markdown("#### Patient-level extraction audit")
-    audit_columns = st.columns(4)
-    audit_cards = [
-        ("Notes assessed", str(audit.total_notes), f"{audit.post_implant_notes} post-implant", "neutral"),
-        ("Hemodynamic hits", str(audit.gradient_hits), "Numeric gradient extractions", "accent"),
-        ("SVD / redo signals", str(audit.svd_hits + audit.redo_hits + audit.viv_hits), "Candidate evidence spans", "warning"),
-        ("Exclusion signals", str(audit.exclusion_hits), "Endocarditis, thrombosis or PVL checks", "neutral"),
-    ]
-    for column, card in zip(audit_columns, audit_cards):
-        with column:
-            st.markdown(metric_card(*card), unsafe_allow_html=True)
-
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("#### Feature lineage")
-        st.markdown(
-            '<div class="panel">'
-            + key_value_grid(
-                [
-                    ("Index source", patient.index_implant_source or "Unavailable"),
-                    ("Implant year", str(patient.index_implant_year or "Unavailable")),
-                    ("Approach", patient.approach or "Unavailable"),
-                    ("Valve model", patient.valve_model or "Unavailable"),
-                    ("Valve family mapping", (patient.valve_family or "Not mapped").replace("_", " ")),
-                    ("PPM proxy definition", "Labelled valve size <=21 mm"),
-                ]
-            )
-            + '</div>',
-            unsafe_allow_html=True,
-        )
-    with right:
-        st.markdown("#### Evidence emitted by Head B")
-        if patient.evidence:
-            for label, text in patient.evidence:
-                st.markdown(evidence_item(label, text), unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div class="panel"><div class="panel-copy">No positive evidence span was emitted for this profile. '
-                'The rationale records the right-censoring or absence of post-implant deterioration evidence.</div></div>',
-                unsafe_allow_html=True,
-            )
-
-    with st.expander("Data-handling notes"):
-        st.markdown(
-            "- Patient keys are de-identified profile identifiers.\n"
-            "- Age is masked throughout the provided notes and is not a model feature.\n"
-            "- Evidence snippets originate from the deterministic extraction output; the dashboard does not send text to an LLM.\n"
-            "- Unknown valve family falls back to the approach-level posterior. Unknown size leaves the documented PPM proxy off."
-        )
-
-
-with evidence_tab:
-    validation = repo.validation_summary()
-    cohort = repo.cohort_summary()
-    st.markdown("### Model and validation evidence")
-    st.caption("Validation is presented with the same uncertainty and limitations recorded in the repository.")
-
-    validation_columns = st.columns(4)
-    validation_cards = [
-        (
-            "Apparent C-index",
-            fmt_number(validation.apparent_c_index, digits=3),
-            "Full-MCMC posterior, in-sample",
-            "accent",
-        ),
-        (
-            "Optimism-corrected C-index",
-            fmt_number(validation.corrected_c_index, digits=3),
-            (
-                f"95% CI {validation.ci_low:.3f}–{validation.ci_high:.3f}"
-                if validation.ci_low is not None and validation.ci_high is not None
-                else "Interval unavailable"
-            ),
-            "warning",
-        ),
-        ("Model-fit cohort", str(cohort["head_a_model_fit"]), f'{cohort["events"]} endpoint events', "neutral"),
-        ("Head B cohort", str(cohort["head_b_patients"]), "Full de-identified cohort", "neutral"),
-    ]
-    for column, card in zip(validation_columns, validation_cards):
-        with column:
-            st.markdown(metric_card(*card), unsafe_allow_html=True)
-
-    chart_col, model_col = st.columns([1.45, 1], gap="large")
-    with chart_col:
-        st.markdown("#### Discrimination context")
-        st.plotly_chart(
-            validation_comparison(
-                bayesian=validation.apparent_c_index,
-                corrected=validation.corrected_c_index,
-            ),
-            width="stretch",
-            config={"displayModeBar": False, "responsive": True},
-        )
-        st.caption(
-            "Comparator values are read from the committed bootstrap reports. Wide uncertainty around the primary estimate is material, not cosmetic."
-        )
-    with model_col:
-        st.markdown("#### Primary Head A")
-        st.markdown(
-            '<div class="panel">'
-            '<div class="panel-title">Hierarchical Bayesian Weibull AFT</div>'
-            '<div class="panel-copy">Interval-censored likelihood; literature-informed approach priors; '
-            'partial pooling of mapped valve families; one labelled-size PPM proxy. '
-            'A shared Weibull shape keeps the model identifiable at the observed event count.</div>'
-            + key_value_grid(
-                [
-                    ("Covariates", "Approach, valve family, PPM proxy"),
-                    ("Excluded", "Age, CKD, diabetes, smoking, sparse baseline echo"),
-                    ("Explanation", "Posterior AFT time ratios"),
-                    ("Endpoint timing", "Year-level interval censoring (±1 year)"),
-                ]
-            )
-            + '</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("#### Known limitations")
+with st.expander("Evidence, methods and limitations"):
     st.markdown(
-        '<div class="callout critical"><strong>Proof of concept, not clinical validation.</strong> '
-        'The cohort is small, only a limited number of events inform Head A, the confidence interval is wide, '
-        'and full-cohort blind physician adjudication remains pending.</div>',
-        unsafe_allow_html=True,
+        f"**Evidence reviewed:** {audit.total_notes} notes, including {audit.post_implant_notes} post-implant notes.  \n"
+        f"**Current-state method:** deterministic VARC-3 rules with documented fallback where baseline measurements are unavailable.  \n"
+        "**Durability model:** hierarchical Bayesian Weibull AFT using implant approach, valve family and a labelled-size PPM proxy.  \n"
+        "**Important limitation:** the fitted cohort has few endpoint events, intervals are wide, competing mortality is not modeled and full-cohort physician adjudication is pending."
     )
-    st.markdown(
-        "- Head A does **not** model competing all-cause mortality, so the displayed event curve is not a CIF.\n"
-        "- TAVR and ViV-TAVR estimates are strongly prior-influenced because observed endpoint events occurred in SAVR-index valves.\n"
-        "- The PPM input is a labelled-size proxy (`<=21 mm`), not measured indexed EOA.\n"
-        "- Missing family or size information is surfaced in the UI and handled exactly as in the fitted pipeline.\n"
-        "- Outputs describe posterior associations and must not be interpreted causally."
-    )
+    for label, text in patient.evidence:
+        st.markdown(f"**{label}:** {text}")
 
-    with st.expander("Why SHAP is not the primary explanation"):
-        st.markdown(
-            "SHAP in this repository belongs to the **XGBoost AFT comparator**, whose optimism-corrected "
-            "C-index is approximately 0.508. The primary model is a Weibull AFT model, so the dashboard "
-            "uses its own posterior time-ratio components. This is faithful to the deployed model and avoids "
-            "presenting comparator diagnostics as validated patient-level importance."
-        )
-    with st.expander("Bootstrap method note"):
-        st.write(validation.method_note or "No method note found in the committed report.")
-
-
-st.markdown(
-    '<div class="footer">DYANIA HEALTH · AVR durability research prototype · '
-    'Current-state phenotyping aligned to repository VARC-3/Capodanno rules · '
-    'Durability forecast from the committed hierarchical Bayesian Weibull AFT posterior · '
-    'Not for clinical use.</div>',
-    unsafe_allow_html=True,
-)
+summary = build_research_summary(patient, prediction, audit)
+st.download_button("Download research summary", data=summary, file_name=f"{patient.profile_key.lower()}_valve_review.md", mime="text/markdown")
+st.markdown('<div class="footer-note">DYANIA · De-identified clinical research prototype · Outputs require physician review</div>', unsafe_allow_html=True)

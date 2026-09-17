@@ -34,6 +34,23 @@ def test_prediction_curve_is_bounded_and_monotonic():
     assert np.all(np.diff(result.risk_median) >= -1e-12)
     assert np.allclose(result.risk_median, 1 - result.survival_median)
     assert result.risk_by_year[5].median > 0
+    assert np.all((result.reference_event_free_median >= 0) & (result.reference_event_free_median <= 1))
+
+
+def test_conditional_forecast_starts_at_one_and_declines():
+    result = predict_durability(
+        posterior_fixture(),
+        approach="SAVR",
+        valve_family="known_family",
+        family_known=True,
+        ppm_proxy_flag=True,
+        size_known=True,
+        observed_event_free_years=6.0,
+    )
+
+    assert np.isclose(result.conditional_event_free_median[0], 1.0)
+    assert np.isclose(result.reference_event_free_median[0], 1.0)
+    assert np.all(np.diff(result.conditional_event_free_median) <= 1e-12)
 
 
 def test_time_ratio_decomposition_matches_aft_parameterization():
@@ -68,4 +85,3 @@ def test_unknown_family_and_size_are_explicit_reference_fallbacks():
     assert result.factors[1].ratio.median == 1.0
     assert result.factors[2].ratio.median == 1.0
     assert "unavailable" in result.factors[2].description.lower()
-

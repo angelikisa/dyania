@@ -88,6 +88,177 @@ class PatientRecord:
             "RS": "Mixed stenosis/regurgitation",
         }.get(self.phenotype or "", "No phenotype assigned")
 
+    @property
+    def current_state_label(self) -> str:
+        if self.bvf_stage >= 2:
+            return "Valve-failure endpoint recorded"
+        return {
+            3: "Severe hemodynamic deterioration",
+            2: "Moderate hemodynamic deterioration",
+            1: "Possible early valve deterioration",
+            0: "No deterioration signal found",
+        }.get(self.hvd_stage, "Valve state requires review")
+
+    @property
+    def forecast_specificity(self) -> str:
+        if self.valve_family_known and self.size_known:
+            return "Fully specified model inputs"
+        if self.valve_family_known or self.size_known:
+            return "Partially individualized estimate"
+        return "Approach-level estimate"
+
+    @property
+    def gradient_delta(self) -> float | None:
+        if self.baseline_mg is None or self.worst_followup_mg is None:
+            return None
+        return self.worst_followup_mg - self.baseline_mg
+
+    def alternative_mechanism_flags(self) -> tuple["MechanismFlag", ...]:
+        """Surface note-derived alternative mechanisms without diagnosing them."""
+
+        evidence_text = " ".join(text for _, text in self.evidence).lower()
+        definitions = (
+            (
+                "Endocarditis",
+                ("endocarditis", "vegetation", "prosthetic valve infection"),
+                "Clinical and microbiology review",
+            ),
+            (
+                "Thrombosis / HALT",
+                ("thrombosis", "thrombus", "halt", "hypoattenuated leaflet"),
+                "Imaging confirmation if clinically suspected",
+            ),
+            (
+                "Paravalvular leak / NSVD",
+                ("paravalvular", "para-valvular", "pvl", "dehiscence"),
+                "Confirm mechanism on echocardiography",
+            ),
+        )
+        flags: list[MechanismFlag] = []
+        for label, terms, next_step in definitions:
+            matched = next((term for term in terms if term in evidence_text), None)
+            source = next(
+                (text for _, text in self.evidence if matched and matched in text.lower()),
+                None,
+            )
+            flags.append(
+                MechanismFlag(
+                    label=label,
+                    detected=matched is not None,
+                    source=source,
+                    next_step=next_step,
+                )
+            )
+        return tuple(flags)
+
+
+@dataclass(frozen=True)
+class MechanismFlag:
+    label: str
+    detected: bool
+    source: str | None
+    next_step: str
+
+
+@dataclass(frozen=True)
+class ReviewAssessment:
+    label: str
+    tone: str
+    summary: str
+    checks: tuple[str, ...]
+
+
+def build_review_assessment(patient: PatientRecord) -> ReviewAssessment:
+    """Translate pipeline output into a plain-language review workflow.
+
+    This is deliberately a review flag, not a surveillance or treatment
+    recommendation.
+    """
+
+    if patient.event or patient.bvf_stage >= 2:
+        return ReviewAssessment(
+            label="Endpoint identified",
+            tone="critical",
+            summary=(
+                "A valve-failure or reintervention endpoint is already present in the extracted record. "
+                "A future-risk estimate is therefore not the relevant output for this case."
+            ),
+            checks=(
+                "Confirm the reintervention date and indication in the source record.",
+                "Verify that structural deterioration, rather than an excluded cause, drove the event.",
+                "Complete physician adjudication of the endpoint.",
+            ),
+        )
+    if patient.confidence_tier == "excluded":
+        return ReviewAssessment(
+            label="Alternative cause flagged",
+            tone="neutral",
+            summary=(
+                "The record contains a non-structural explanation such as endocarditis, thrombosis, or "
+                "paravalvular leak. The case should not be counted as structural valve deterioration without review."
+            ),
+            checks=(
+                "Review the documented exclusion evidence.",
+                "Confirm whether any independent structural deterioration signal is also present.",
+                "Record the adjudicated cause of dysfunction.",
+            ),
+        )
+    if patient.hvd_stage >= 3:
+        return ReviewAssessment(
+            label="Priority review",
+            tone="critical",
+            summary=(
+                "The available record contains a severe hemodynamic deterioration signal. "
+                "The source measurements and current valve status need confirmation."
+            ),
+            checks=(
+                "Verify the latest mean gradient, EOA/DVI, and regurgitation grade.",
+                "Compare with the post-implant baseline when available.",
+                "Confirm the stage and cause with the clinical reviewer.",
+            ),
+        )
+    if patient.hvd_stage == 2:
+        return ReviewAssessment(
+            label="Needs confirmation",
+            tone="attention",
+            summary=(
+                "The available record contains a moderate hemodynamic deterioration signal. "
+                "This is a review flag, not a treatment or surveillance recommendation."
+            ),
+            checks=(
+                "Verify the extracted gradient and the date of the latest study.",
+                "Check whether a valid post-implant baseline is available.",
+                "Confirm VARC-3 staging or document use of the absolute-threshold fallback.",
+            ),
+        )
+    if patient.hvd_stage == 1 or patient.confidence_tier == "possible":
+        return ReviewAssessment(
+            label="Evidence review",
+            tone="attention",
+            summary=(
+                "A qualitative or morphology-only signal was found, but the available evidence is insufficient "
+                "for definitive hemodynamic staging."
+            ),
+            checks=(
+                "Read the extracted source sentence in context.",
+                "Look for a numeric follow-up echocardiogram.",
+                "Confirm or dismiss the possible deterioration signal.",
+            ),
+        )
+    return ReviewAssessment(
+        label="No signal in available records",
+        tone="stable",
+        summary=(
+            "No post-implant deterioration endpoint was identified in the available notes. "
+            "This does not establish a normal current echocardiogram or complete follow-up."
+        ),
+        checks=(
+            "Confirm that the most recent surveillance study is represented in the dataset.",
+            "Check implant metadata and available follow-up duration.",
+            "Keep the case right-censored unless new evidence is found.",
+        ),
+    )
+
 
 @dataclass(frozen=True)
 class AuditSummary:
