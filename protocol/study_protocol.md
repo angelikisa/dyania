@@ -15,7 +15,7 @@ structural valve deterioration severity per VARC-3, with every assignment tracea
 1. Differentiate durability trajectories by implant approach (SAVR vs. TAVR vs. valve-in-valve) and valve family.
 2. Characterize the S/R/RS (stenosis/regurgitation/mixed) phenotype distribution of SVD in this cohort.
 3. Quantify how much a literature-informed Bayesian prior improves discrimination over purely data-driven
-   comparators at a sample size (n=99, 11 events) too small to support an unconstrained model.
+   comparators at a sample size (n=99, 5-9 events) too small to support an unconstrained model.
 4. Establish and validate a reproducible, auditable NLP labeling pipeline as the prerequisite for any of the above —
    in practice, this consumed the majority of the effort in this build, since a durability model is only as good as
    its labels (see `review/error_catalogue.md`).
@@ -38,8 +38,9 @@ Report/Procedures note, or a narrative implant mention with an explicit nearby d
   landmark *is* the index implant event.
 
 ### Cohort Size Estimate
-117 patients total (Head B / severity cohort); 99 with a Head A time origin, of whom 11 have a confirmed BVF Stage
-2 event. This is well below the sample size a frequentist survival model would need for stable, generalizable
+117 patients total (Head B / severity cohort); 99 with a Head A time origin, of whom 8 have a physician-confirmed
+BVF Stage 2 event (final, post-sign-off — see §5 and `review/error_catalogue.md` §8). This is well below the
+sample size a frequentist survival model would need for stable, generalizable
 covariate estimates — the entire modeling strategy (hierarchical Bayesian partial pooling + literature-informed
 priors, §5 of `model/approach.md`) is a direct response to this constraint, not an incidental choice. A future
 multi-site extension would need on the order of several hundred confirmed events (guided by an EPV rule of
@@ -53,7 +54,8 @@ bicuspid anatomy, baseline hemodynamics) that this build could not include for c
 notes review and staged per VARC-3 (Généreux et al., Eur Heart J 2021). Threshold for clinical usefulness: the
 model's posterior time ratios and risk categories should meaningfully separate valve families/approaches with
 already-known different durability profiles in the literature (a construct-validity check — Master Prompt §8 Level
-2 — designed but not yet run in this build, see `reports/head_a_validation_report.md`).
+2 — run on the final 8-event cohort; results are mixed/confounded rather than a clean pass, see
+`reports/head_a_validation_report.md` Level 2 for the full breakdown).
 
 ### Secondary Endpoints
 
@@ -73,18 +75,32 @@ detail.
 negation-checked, or explicit SVD/BVF text not confined to a bare coded problem-list entry) → Probable (hemodynamic
 threshold met without a baseline reference echo) → Possible (morphology-only or qualitative-trend-only finding, or
 a bare coded-history SVD phrase with unconfirmed etiology) → Excluded (endocarditis/thrombosis/PVL competing event)
-→ Censored (no post-implant evidence). Implemented deterministically in `varc3_rules.py`, validated against a
-physician-reviewed 19-patient seed set (reintervention-detector F1 = 1.000 after four root-caused bug fixes — see
-`review/error_catalogue.md`), and currently undergoing full 117-patient physician blind adjudication in parallel
-with model development (`review/adjudication_form.xlsx`).
+→ Censored (no post-implant evidence). Implemented deterministically in `varc3_rules.py`, first validated against a
+physician-reviewed 19-patient seed set (reintervention-detector F1 = 1.000 after four root-caused bug fixes), then
+against a full 117-patient physician blind adjudication (`review/adjudication_form.xlsx`) — the blind full-cohort
+read scored much lower (F1 = 0.353, near-chance kappa) than the anchored seed check, a discrepancy attributed to
+confirmation bias in how the seed set was originally built (it reviewed automated hits rather than reading blind)
+rather than to pipeline regression; see `reports/head_a_validation_report.md` Level 1 for the full discussion. Of
+11 disagreements surfaced by the blind read, 7 were resolved by mechanical raw-text re-checks, code fixes, or a
+definitional schema split (`any_AV_reintervention` vs. `SVD_specific_BVF`); the remaining 4 (Patient_058, 061, 068,
+081) required physician judgment calls and were resolved via physician sign-off received 2026-09-17 (asymmetric
+outcome: 058/061/068 confirmed the pipeline's original read, 081 confirmed the physician's read over the
+pipeline's, which is documented as a known extractor gap in `config/label_overrides.yaml`). See
+`review/error_catalogue.md` §8 for the full audit trail.
 
 ## 5. Statistical Analysis Plan
 
 ### Sample Size
-11 confirmed primary-endpoint events, 18 expanded-endpoint-only events, against 99 patients with a usable time
-origin. This is explicitly below what a classical Cox model's EPV rule would recommend for more than 1-2
-covariates — the reason the primary model uses hierarchical Bayesian shrinkage with informative priors rather than
-an unpooled frequentist fit (see `model/approach.md` §2, §4).
+**8 physician-confirmed primary-endpoint events** (all `confidence_tier=definite`, final — physician sign-off
+received 2026-09-17 on the last four disputed cases; see `review/error_catalogue.md` §8 and
+`config/label_overrides.yaml`), plus 22 expanded-endpoint-only (`probable`-tier) events, against 99 patients with a
+usable time origin. This is explicitly below what a classical Cox model's EPV rule would recommend for more than
+1-2 covariates — the reason the primary model uses hierarchical Bayesian shrinkage with informative priors rather
+than an unpooled frequentist fit (see `model/approach.md` §2, §4). The pipeline still computes a dual-column label
+schema (`event` / `event_sensitivity_incl_pending`) as a methodological safeguard, but with zero patients remaining
+`pending_physician_reconfirmation`, both columns now coincide at 8 events — the primary/sensitivity split reported
+in earlier drafts of this protocol no longer applies. See `model/approach.md` and
+`reports/head_a_validation_report.md` for the final numbers.
 
 ### Train / Validation / Test Split
 None used. At this event count, a hold-out split would leave single-digit events per arm — not a meaningful test.
@@ -97,24 +113,25 @@ No oversampling or SMOTE is used anywhere, per Hard Rule #6 — the primary/expa
 events vs. 99 patients) is handled by the Bayesian model's own likelihood and priors, not by resampling the data.
 
 ### Evaluation Metrics
+> **⚠ Re-validated 2026-09-17 on the current 5-event primary cohort** (after 4 patients — 058, 061, 068, 081 —
+> moved to `pending_physician_reconfirmation`, per `config/label_overrides.yaml`). The primary model's own
+> bootstrap-corrected number is still running as of this writing (~2h estimated) — check
+> `reports/head_a_validation_report.md` Level 3 for whichever is current before citing it.
+
 Uno's C-index (approximated here via `lifelines.utils.concordance_index` on a midpoint-time approximation, since
 scikit-survival's IPCW C-index implementation could not be installed in this environment — see `model/approach.md`
 §2), reported **Harrell bootstrap-corrected with 95% CI**, not as a naive in-sample point estimate (Master Prompt
-§8 Level 3): primary Bayesian Weibull AFT 0.611 apparent → **0.591 corrected, 95% CI [0.437, 0.725]**; penalized
-Cox 0.556 → 0.546, CI [0.481, 0.585]; XGBoost AFT 0.519 → 0.508, CI [0.446, 0.537]; valve-family-only Weibull
-collapses to a degenerate 0.500 (most bootstrap resamples couldn't even be fit — zero events in a resampled
-family, and the ones that could fit used only a single family whose patients all share one constant predicted
-value, mathematically guaranteeing ties); literature-prior-only (null, not bootstrapped — zero fitted parameters)
-apparent C-index is 0.481, i.e. *below chance* on this cohort. Every interval is wide and several cross 0.5
-(chance) — including the primary model's own lower bound — reported explicitly rather than only as a point
-estimate. **The primary model's row now uses the same full-MCMC fitting procedure as the other three bootstrapped
-comparators** (an earlier version used MAP point estimates, a real asymmetry — fixed by re-running with full MCMC;
-the result moved only slightly, 0.588→0.591). The one remaining, stated difference is resample count: B=100 for
-the primary model vs. B=500 for the others, a computational-tractability choice (full-MCMC-per-resample calibrated
-at ~73s; B=500 would take ~10 hours) documented in `model/approach.md` §8 and `reports/head_a_validation_report.md`
-Level 3, which makes this row's CI somewhat noisier than the B=500 rows'. Posterior diagnostics (R-hat, ESS) for
-the primary model's one reported full-MCMC fit converged cleanly (R-hat = 1.00, ESS in the thousands, 8000
-post-warmup draws across 4 chains); the B=100 bootstrap resamples' own diagnostics were somewhat noisier (mean max
+§8 Level 3): penalized Cox 0.543 apparent → **0.532 corrected, 95% CI [0.466, 0.559]**; XGBoost AFT 0.500 →
+**0.494, CI [0.433, 0.529]** (essentially exact chance); valve-family-only Weibull collapses to a degenerate 0.500
+(now 213/500 = 43% of resamples fail to fit at all, up from 26% on the larger cohort — fewer events makes this
+comparator even less viable); literature-prior-only (null, not bootstrapped — zero fitted parameters) apparent
+C-index is 0.486, essentially chance. **On this reduced cohort, both purely data-driven comparators now sit at or
+below chance once bootstrap-corrected** — a starker version of the pattern seen on the original (10/11-event)
+cohort. The primary model's apparent (in-sample, NOT yet bootstrap-corrected) C-index is 0.786 — read with real
+caution, since a C-index on only 5 events is highly unstable and this number will very likely move once the
+bootstrap correction lands. Posterior diagnostics (R-hat, ESS) for the primary model's one reported full-MCMC fit
+on the 5-event cohort converged cleanly (R-hat = 1.00, 12 divergences/8000 draws ≈0.15%); the B=100 bootstrap
+resamples' own diagnostics from the prior (10/11-event) run were somewhat noisier than that single fit (mean max
 R-hat 1.022, ~1.1% divergence rate), as expected for 100 unattended refits vs. one carefully monitored fit. Time-dependent AUC, integrated Brier score, and calibration
 plots are designed but not yet computed.
 
@@ -157,8 +174,9 @@ cohorts with their own demographic skew (e.g. TAVR trial populations trending ma
 propagated into our priors unexamined.
 
 ### Clinical Transparency
-Every model output carries the disclaimer that factors are statistical associations from n=99/11-events, not
-causal effects, and that the underlying severity labels are pipeline-derived and pending physician sign-off (see
-`model/approach.md` §7). The system is designed as a surveillance-scheduling decision-support flag — never a
+Every model output carries the disclaimer that factors are statistical associations from n=99 patients/8 events, not
+causal effects, and that the underlying severity labels are pipeline-derived with physician sign-off received on
+all adjudicated disagreements (see `model/approach.md` §7 and `review/error_catalogue.md` §8) — sign-off covers the
+label *values* used, not an independent clinical validation of the model's forecasts. The system is designed as a surveillance-scheduling decision-support flag — never a
 standalone trigger for reintervention — and every Head B stage assignment carries its source sentence for a
 clinician to verify directly rather than take on faith.

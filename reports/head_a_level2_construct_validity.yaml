@@ -5,20 +5,20 @@ age:
     literature's 'younger age -> higher SVD' association cannot be tested against
     this cohort at all.
 labelled_size:
-  n_event: 5
-  n_censored: 53
-  mean_event: 24.6
-  mean_censored: 24.566037735849058
-  welch_t: 0.03978445568285143
-  welch_p: 0.9694198997707426
-  mannwhitney_p: 0.9552057894366479
+  n_event: 4
+  n_censored: 54
+  mean_event: 25.0
+  mean_censored: 24.537037037037038
+  welch_t: 0.5081715149927114
+  welch_p: 0.6345830251509582
+  mannwhitney_p: 0.8155189709830928
   replicated: false
 valve_family:
   family_table:
     carpentier_edwards_savr_pericardial:
       n: 10
-      events: 3
-      rate: 0.3
+      events: 2
+      rate: 0.2
     corevalve_evolut_tavr_self_expanding:
       n: 3
       events: 0
@@ -60,8 +60,8 @@ valve_family:
       mean_followup_years: 7.0
     Perimount:
       n: 4
-      events: 1
-      rate: 0.25
+      events: 0
+      rate: 0.0
       mean_followup_years: 3.75
     Perimount 2700:
       n: 1
@@ -103,9 +103,9 @@ valve_family:
     where SVD would typically appear. This is a CONFOUNDED comparison, not a clean
     replication or refutation -- reported as such, not smoothed into either direction.
 early_svd_rarity:
-  n_savr_events: 11
+  n_savr_events: 8
   n_before_5y: 0
-  min_years: 5.0
+  min_years: 6.0
   median_years: 12.0
   max_years: 15.0
   replicated: true

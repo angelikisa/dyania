@@ -30,7 +30,7 @@ Patient_015,Operative Report,2016,False,0,0,0,0,0,0
 Patient_016,Operative Report,2021,False,0,0,0,0,0,0
 Patient_016,Progress Notes,2022,True,0,0,0,3,0,0
 Patient_017,Operative Report,2014,False,0,0,0,0,0,0
-Patient_017,Progress Notes,2026,True,2,0,1,2,2,0
+Patient_017,Progress Notes,2026,True,1,0,1,2,2,0
 Patient_018,Operative Report,2013,False,0,0,0,0,0,0
 Patient_019,Operative Report,2022,False,0,0,0,0,0,0
 Patient_019,Operative Report,2022,False,0,0,0,0,0,0
@@ -110,7 +110,7 @@ Patient_055,Operative Report,2016,False,0,0,0,0,0,0
 Patient_056,Operative Report,2019,False,0,0,0,0,0,0
 Patient_057,Operative Report,2020,True,0,0,0,0,0,0
 Patient_058,Operative Report,2016,False,0,0,0,0,0,0
-Patient_058,Progress Notes,2024,True,0,3,0,4,0,0
+Patient_058,Progress Notes,2024,True,0,1,0,4,0,0
 Patient_059,Operative Report,2017,False,0,0,0,0,0,0
 Patient_059,Progress Notes,2025,True,0,0,0,1,0,0
 Patient_060,Operative Report,2018,False,0,0,0,0,0,0
@@ -138,7 +138,7 @@ Patient_069,Progress Notes,2025,True,0,0,0,0,2,0
 Patient_070,Operative Report,2021,False,0,0,0,0,0,0
 Patient_070,Progress Notes,2020,False,0,0,0,1,0,0
 Patient_071,Operative Report,2013,False,0,0,0,0,0,0
-Patient_071,Progress Notes,2018,True,2,0,0,2,0,0
+Patient_071,Progress Notes,2018,True,0,0,0,2,0,0
 Patient_072,Procedures,2015,False,0,0,0,0,0,0
 Patient_072,Operative Report,2015,False,0,0,0,0,0,0
 Patient_072,Progress Notes,2015,False,0,0,0,1,0,0

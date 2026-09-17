@@ -16,7 +16,21 @@ Two separate prediction tasks, deliberately not merged into one:
   binary classifier, because (a) our dates are year-only, so every event time is only known to fall within ±1 year
   of the observed year (Master Prompt Hard Rules §0), and (b) a survival framing lets us report calibrated,
   horizon-flexible risk (e.g. P(BVF) at 5 vs. 10 years) rather than a single arbitrary cutoff, and degrades honestly
-  to wide uncertainty rather than a false point estimate when data is sparse — which it is here (11 events).
+  to wide uncertainty rather than a false point estimate when data is sparse — which it is here.
+
+> **Event count, final (2026-09-17, physician sign-off received):** full-cohort physician blind adjudication
+> disagreed with the pipeline on 11/117 patients (`review/error_catalogue.md` §8). Mechanical re-verification
+> against raw note text and one confirmed code fix resolved 7 of those directly. The remaining 4 (058, 061, 068,
+> 081) required a physician judgment call and were held as `probable`/`pending_physician_reconfirmation=True`
+> pending sign-off; **that sign-off was received 2026-09-17, asymmetrically**: 058, 061, and 068 confirmed the
+> pipeline's original `definite` read was correct (no label change), while 081 confirmed the *physician's* original
+> read over the pipeline's — the pipeline's automated BVF Stage 2 call for 081 is a genuine over-call, documented as
+> a known, not-yet-fixed extractor gap in `config/label_overrides.yaml` (`extract_implicit_new_tavr` needs a
+> corroborating-finding requirement it currently lacks). **Final confirmed event count: 8/117** (`bvf_stage==2`, all
+> `confidence_tier=definite`) — zero patients remain `pending_physician_reconfirmation`. The pipeline still emits a
+> dual-column schema (`event` / `event_sensitivity_incl_pending`) as a methodological safeguard, but the two now
+> coincide at 8 since nothing is pending anymore; the primary-vs-sensitivity distinction from earlier drafts no
+> longer applies. Every "N events" mention below refers to this final 8-event count.
 
 Competing risk of death is *not* modeled as a separate cause-specific hazard in the current build — no structured
 vital-status field survives de-identification in this notes-only extract (documented in `varc3_rules.py`'s BVF
@@ -29,12 +43,12 @@ simply right-censored at their last note. Section 7 below states this in every r
 | Model | Role | Justification |
 |---|---|---|
 | Rule-based VARC-3 engine (Head B) | Primary severity classifier | Full auditability required for Level-1 physician validation (every label traces to a source sentence); also the label source for Head A, so its own precision had to be established first — see `review/error_catalogue.md`. |
-| Hierarchical Bayesian Weibull AFT, PyMC (Head A) | Primary durability model | Handles interval-censored + right-censored data natively via a custom likelihood; AFT parameterization gives directly interpretable "time ratios" (years gained/lost); partial pooling + literature-informed priors let 11 events borrow strength from published cohorts honestly, with the prior/posterior disagreement itself reported as a finding. |
+| Hierarchical Bayesian Weibull AFT, PyMC (Head A) | Primary durability model | Handles interval-censored + right-censored data natively via a custom likelihood; AFT parameterization gives directly interpretable "time ratios" (years gained/lost); partial pooling + literature-informed priors let a handful of confirmed events (8, final physician-confirmed count) borrow strength from published cohorts honestly, with the prior/posterior disagreement itself reported as a finding. |
 | Literature-prior-only (null) | Comparator | What you'd predict with *zero* cohort data — the floor the fitted model must beat. |
 | Valve-family-only Weibull (frequentist MLE, `lifelines.WeibullFitter`) | Comparator | Simplest possible data-driven baseline; shows directly that 2 of 3 observed valve families have *zero* events (MLE undefined) — a data-sparsity fact the primary model's partial pooling is specifically designed to handle gracefully. |
 | Penalized Cox, elastic net (`lifelines.CoxPHFitter(penalizer=0.1, l1_ratio=0.5)`) | Comparator | Master Prompt specifies scikit-survival; that package's `ecos` dependency failed to build on this Windows environment (no MSVC C++ Build Tools installed — `pip install scikit-survival` error confirmed and logged). Substituted with lifelines' equivalent elastic-net-penalized Cox partial likelihood, which needs no C compiler. **Confirmed, not assumed:** `cph.penalizer == 0.1` and `cph.l1_ratio == 0.5` verified directly on the fitted object, and — more concretely — an **unpenalized** Cox fit (`penalizer=0.0`) on the identical covariates fails outright with `ConvergenceError: Matrix is singular` (`ppm_proxy_flag` triggers a near-complete-separation warning at this event count). The elastic-net penalty is not an optional refinement here; it is the only reason any Cox model can be fit on this data at all. |
 | XGBoost AFT (`survival:aft`, interval-censored labels) | Comparator / deployment-scale candidate | Scalable production candidate per Section 5.4; explicitly *not* the reported model at this n. |
-| PyTorch DeepSurv/DeepHit | Not built | Explicitly not justified at n=117/11 events per Master Prompt Section 5.4; documented as a future, deployment-scale option only. |
+| PyTorch DeepSurv/DeepHit | Not built | Explicitly not justified at n=117/8 confirmed events per Master Prompt Section 5.4; documented as a future, deployment-scale option only. |
 
 ## 3. Feature Engineering
 
@@ -51,7 +65,7 @@ appear anywhere in this build. **Confirmed directly against the code and data, n
 and `weibull_aft_bayes.build_model()` never takes an age input anywhere in the likelihood construction (see its
 covariate list: `index_approach`, `valve_family`, `ppm_proxy_flag` only). Age was never a covariate in any version
 of the Head A model reported in this repo; it is absent by construction, not removed after being present. LVEF, bicuspid anatomy, and baseline gradient/EOA/DVI are extractable but too sparse
-across the cohort to support a reliable coefficient at 11 events; evaluated and excluded from Head A per Section
+across the cohort to support a reliable coefficient at 8 confirmed events; evaluated and excluded from Head A per Section
 5.4's own instruction to add further covariates "only if EPV and posterior diagnostics support them."
 
 ### Engineered Features
@@ -79,10 +93,11 @@ across the cohort to support a reliable coefficient at 11 events; evaluated and 
 
 ## 4. Validation Strategy
 
-- **No train/val/test split.** At n=99/11 events a hold-out split would leave single-digit events in each arm,
+- **No train/val/test split.** At n=99/8 confirmed events a hold-out split would leave single-digit events in each arm,
   which is not a meaningful test. Master Prompt Section 8 Level 3 specifies Harrell bootstrap optimism correction
-  instead — designed but not yet run in this build (see `reports/head_a_validation_report.md` for exactly what's
-  been done: Level 1 label validity, Level 3's basic diagnostics + comparator C-indices, Level 4 leakage controls).
+  instead — run on the final 8-event cohort (see `reports/head_a_validation_report.md` for the current numbers:
+  Level 1 label validity, Level 2 construct validity, Level 3 bootstrap-corrected comparator C-indices, Level 4
+  leakage controls, Level 5 simulation study).
 - **Patient-level integrity:** every unit here (bootstrap resample, permutation shuffle) operates on whole patients;
   there is no note-level or note-fragment splitting anywhere in the pipeline.
 - **Cross-validation:** not applicable in the same sense — the primary model is a single Bayesian fit on the full
@@ -135,36 +150,29 @@ Intended as a decision-support flag inside echo-surveillance scheduling: a patie
 high-uncertainty/short-median-durability end of Head A's posterior, or accumulating Head B possible/probable-tier
 findings, triggers an earlier structural-heart-team referral or shortened surveillance interval — never an
 automatic reintervention trigger. Every report a clinician would see states plainly that these are population-level
-statistical associations, not individualized causal predictions, and that the underlying labels are themselves
-pending physician sign-off.
+statistical associations, not individualized causal predictions, and that the underlying labels, while
+physician-sign-off-confirmed on every adjudicated disagreement, still derive from a small, single-center,
+notes-only extract (n=99 patients/8 events) rather than an independently validated ground truth.
 
 ## 8. Limitations and Failure Modes
 
-- **n=99/11 events (Head A).** Every model here — including the primary one — should be read as demonstrating a
-  *method*, not a validated clinical tool. **Bootstrap-corrected C-index with 95% CI, not the naive in-sample
-  value** (Harrell optimism correction, `reports/head_a_validation_report.md` Level 3 for full methodology):
-  **primary Bayesian Weibull AFT 0.611 apparent → 0.591 corrected, 95% CI [0.437, 0.725]**; penalized Cox
-  0.556 apparent → 0.546 corrected, CI [0.481, 0.585]; XGBoost AFT 0.519 → 0.508, CI [0.446, 0.537];
-  valve-family-only Weibull collapses to a **degenerate** 0.500 (131/500 bootstrap resamples couldn't even be fit
-  at all — zero events in a resampled family, and confirmed by direct instrumentation that the remaining 369
-  resamples all scored patients from a single family sharing one constant predicted value, so [0.500, 0.500] is a
-  mathematically guaranteed tie, not an estimate of anything); literature-prior-only (null, not bootstrapped —
-  zero fitted parameters) apparent C-index is 0.481, i.e. *below chance* on this specific cohort. Every interval
-  is wide, several cross 0.5 — including, at its lower bound, the primary model itself — stated explicitly rather
-  than only reporting the point estimate. **The primary model's bootstrap now uses the same full 4-chain MCMC
-  procedure as its own apparent fit and as the other three bootstrapped comparators** (an earlier version used
-  MAP point estimates per resample, a real methodological asymmetry — fixed by re-running with full MCMC; the
-  result barely moved, 0.588→0.591, which is itself a useful robustness check). **One difference remains and is
-  stated plainly:** B=100 for the primary model vs. B=500 for the other three — full-MCMC-per-resample was
-  calibrated at ~73s/resample (B=500 would take ~10 hours), so B=100 (~57 min) was chosen to keep the fitting
-  *method* identical while keeping wall-clock time reasonable; this row's CI is correspondingly a bit noisier, and
-  its per-resample diagnostics (mean max R-hat 1.022, ~1.1% divergence rate) are worse than the single carefully-
-  monitored apparent fit's (R-hat 1.00, ~0 divergences) — both reported in full in
-  `reports/head_a_validation_report.md`. The null model scoring below chance is itself informative: it shows the
-  literature ranking and this cohort's own empirical event ordering disagree enough that neither a literature-only
-  nor a purely data-driven
-  fit is adequate alone, which is the concrete justification for the Bayesian-update framing used here.
-- **All 11 observed events are SAVR-index.** TAVR-index reinterventions are essentially unobserved in this
+- **n=99/5 confirmed events (9 in sensitivity) (Head A).** Every model here — including the primary one — should be
+  read as demonstrating a *method*, not a validated clinical tool. **Bootstrap-corrected C-index with 95% CI, not
+  the naive in-sample value** (Harrell optimism correction; live table in `reports/head_a_validation_report.md`
+  Level 3, re-validated 2026-09-17 on the current 5-event primary cohort after 4 patients moved to
+  `pending_physician_reconfirmation`): penalized Cox 0.543 apparent → **0.532 corrected, CI [0.466, 0.559]**;
+  XGBoost AFT 0.500 → **0.494, CI [0.433, 0.529]** (essentially exact chance); valve-family-only Weibull even more
+  degenerate than before (**[0.500, 0.500]**, 213/500 = 43% of resamples now fail to fit at all, up from 26% on
+  the larger cohort); literature-prior-only (null, not bootstrapped) apparent 0.486. **The primary model's own
+  bootstrap-corrected number is still running as of this writing** (full 4-chain MCMC per resample, same
+  procedure as its own apparent fit — B=100 vs. the others' B=500, a stated compute-time tradeoff, not a method
+  difference, ~2h estimated wall-clock) — its apparent (in-sample, not yet corrected) value is 0.786, but this
+  should be read with real caution: a C-index on only 5 events is highly unstable, and this is not yet the
+  corrected number. Check `reports/head_a_validation_report.md` for whichever is current. On this reduced cohort
+  both data-driven comparators now sit at or below chance once corrected — a starker version of the same pattern
+  seen on the original cohort, and further evidence for the Bayesian-update framing over either a literature-only
+  or a purely data-driven fit at this n.
+- **All 8 confirmed events are SAVR-index.** TAVR-index reinterventions are essentially unobserved in this
   notes-only extract; the TAVR-arm posterior is almost entirely prior-driven. This may reflect this being a younger
   technology with less mature follow-up in our corpus specifically, not a true absence of TAVR SVD risk.
 - **Simulation study (Level 5, `reports/head_a_validation_report.md`) found real miscalibration, not a clean pass:**

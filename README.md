@@ -11,9 +11,10 @@ Bioprosthetic aortic valves wear out. Structural valve deterioration (SVD) is cu
 echocardiographic surveillance — a strategy that misses the individual variation in when a given valve, patient, or
 device family actually starts failing. By the time a patient presents symptomatically with severe hemodynamic
 deterioration, the reintervention (redo surgery or valve-in-valve TAVR) is often performed under worse conditions
-than an earlier, risk-stratified referral would have allowed. In our own 117-patient cohort, all 11 confirmed
-reinterventions were driven by SAVR-index valves; several patients (e.g. one case with an emergent, cardiogenic-shock
-valve-in-valve) illustrate the cost of late identification directly. A system that stages current SVD severity from
+than an earlier, risk-stratified referral would have allowed. In our own 117-patient cohort, **8 reinterventions
+were identified and physician-confirmed** (all SAVR-index — see below); several patients (e.g. one case with an
+emergent, cardiogenic-shock valve-in-valve) illustrate the cost of late identification directly. A system that
+stages current SVD severity from
 routinely collected notes and forecasts individual durability could shift surveillance from fixed-interval to
 risk-adaptive.
 
@@ -33,11 +34,13 @@ labs/medications — see [Key Design Decisions](#key-design-decisions)):
   alongside four comparators (literature-prior-only, valve-family-only frequentist Weibull, penalized Cox, XGBoost
   AFT).
 
-We chose this over an end-to-end black-box model because n=117 with only 11 confirmed events cannot responsibly
+We chose this over an end-to-end black-box model because n=117 with only 8 confirmed events cannot responsibly
 support anything more complex, and because a physician reviewer needs to see and correct every label before any
 model trained on it is trusted — see [`review/error_catalogue.md`](review/error_catalogue.md) for a full account of
-validating and fixing the NLP pipeline (four root-caused bugs found and fixed against a physician-reviewed seed set,
-seed-set reintervention-detector F1 improved from 0.933 to 1.000 after fixing) before any modeling was done.
+validating and fixing the NLP pipeline: four root-caused bugs found and fixed against a physician-reviewed 19-patient
+seed set (reintervention-detector F1 improved from 0.933 to 1.000), followed by a full 117-patient blind physician
+adjudication that surfaced a much lower blind-read F1 (0.353, near-chance kappa) and 11 disagreements, all of which
+are now resolved with physician sign-off received 2026-09-17.
 
 ## Key Design Decisions
 
@@ -45,10 +48,11 @@ seed-set reintervention-detector F1 improved from 0.933 to 1.000 after fixing) b
 |---|---|
 | Two separate heads (severity now, durability forecast) rather than one endpoint | VARC-3 defines BVF as the endpoint of a staged process (HVD 1→2→3→BVF); a single binary label would throw away the staging information that is the whole clinical point, and the two heads have genuinely different evidence requirements (deterministic rules vs. probabilistic time-to-event). |
 | Deterministic rule engine for severity, not a trained classifier | At n=117 with sparse baseline echo, a physician must be able to trace every label to its source sentence for Level-1 validation (Section 8) — this also directly produces the weak-supervision labels Head A trains on, so its own precision has to be defensible first (see error_catalogue.md). |
-| Hierarchical Bayesian AFT with literature priors, not a purely data-driven survival model | 11 events cannot identify a rich model on its own. Partial pooling + literature-anchored priors (verified against the actual source PDFs, not taken on faith — see `config/priors.yaml`) let the model borrow strength honestly, and the posterior vs. prior comparison is itself a finding worth reporting. |
+| Hierarchical Bayesian AFT with literature priors, not a purely data-driven survival model | 8 events cannot identify a rich model on their own. Partial pooling + literature-anchored priors (verified against the actual source PDFs, not taken on faith — see `config/priors.yaml`) let the model borrow strength honestly, and the posterior vs. prior comparison is itself a finding worth reporting. |
+| 11/117 disagreements from full-cohort blind physician adjudication, all resolved before final labels | Mechanical raw-text re-verification and one code fix resolved 7 directly (`review/error_catalogue.md` §8); the remaining 4 (058, 061, 068, 081) needed a physician judgment call and were held as `pending_physician_reconfirmation` until sign-off — received 2026-09-17, asymmetrically (058/061/068 confirmed the pipeline; 081 confirmed the physician, over the pipeline's over-call). Final confirmed count: 8/117 events. See `config/label_overrides.yaml`. |
 | Age excluded as a covariate; "age-only" comparator not built | `[AGE]` is masked in every note in this corpus, with zero surviving numeric values anywhere (verified by a full-corpus regex scan). We report this as a limitation rather than fabricating or imputing an age. |
 | Labs/medications used descriptively only, never as model features | None of the 8 confirmed SVD reinterventions fall in the 17-patient labs/meds subset (the two reinterventions that subset does contain are both non-SVD: endocarditis and probable PVL) — training a "labs+meds" predictive model on zero SVD events would be fabricating signal. Documented as missing-by-design (block-wise extraction gap), with an explicit note that this may not generalize to a deployment setting where labs/meds exist for every patient. |
-| Physician adjudication runs in parallel with, not gating, modeling | Given the 3-day timeline, `review/adjudication_form.xlsx` covers all 117 patients and is being completed by the team physician while Head A/B development proceeds on the pipeline's own (validated, bug-fixed) labels — every document here states explicitly that full physician sign-off is pending. |
+| Physician adjudication ran in parallel with, not gating, modeling — then closed the loop before submission | Given the 3-day timeline, `review/adjudication_form.xlsx` covered all 117 patients while Head A/B development proceeded on the pipeline's own (validated, bug-fixed) labels; sign-off on the 4 outstanding disagreements was received 2026-09-17 and Head A was re-run on the final label set before this submission. |
 
 ---
 
@@ -107,16 +111,21 @@ python reviewer_sheet.py                          # -> review/adjudication_form.
 All scripts use fixed seeds (20260917). On Windows without a C++ build toolchain, PyMC's sampling requires
 `PYTENSOR_FLAGS="cxx="` (pure-Python fallback — see `model/approach.md`).
 
-## Status / what's pending
+## Status — what's final and what's genuinely still open
 
-- Physician adjudication of all 117 patients (`review/adjudication_form.xlsx`) is in progress, not complete.
-  Everything in this repo is built on the pipeline's own validated labels, explicitly flagged as
-  pending-confirmation throughout.
-- Validation Levels 1 (label validity), 2 (construct/known-groups), 3 (bootstrap-corrected C-index for all 5
-  models with 95% CIs, explicitly wide given 11 events), 4 (leakage), and 5 (simulation study) are all done — see
-  `reports/head_a_validation_report.md`. Sensitivity analyses (VARC-3 vs. Capodanno, endpoint definition, prior
-  informativeness) are designed but not yet run.
-- Guyot KM-curve reconstruction (Master Prompt Section 5.6): algorithm implemented and self-tested on synthetic
-  data (`src/external/guyot.py`), and a concrete digitization checklist exists
-  (`data/external/km_digitized/DIGITIZATION_CHECKLIST.md`) — but never run on real data, since none of the 3
-  provided source PDFs contain an actual KM curve with a numbers-at-risk table (confirmed by full-text search).
+- **Physician adjudication of all 117 patients is complete, and sign-off has been received on every disagreement**
+  (`review/adjudication_form.xlsx`, sign-off 2026-09-17). Full-cohort blind review disagreed with the pipeline on
+  11 patients; 7 resolved via mechanical raw-text re-verification/code fixes, the remaining 4 (058, 061, 068, 081)
+  via physician sign-off (asymmetric: 058/061/068 confirmed the pipeline, 081 confirmed the physician). **Final
+  confirmed event count: 8/117** — zero patients remain `pending_physician_reconfirmation`. Full account:
+  `review/error_catalogue.md` §8, `config/label_overrides.yaml`.
+- Validation Levels 1 (label validity), 2 (construct/known-groups), 3 (bootstrap-corrected C-index), 4 (leakage),
+  and 5 (simulation study) are all re-run on this final 8-event cohort — see `reports/head_a_validation_report.md`
+  for the current numbers. VARC-3-vs-Capodanno and prior-informativeness sensitivity checks remain not yet run.
+- **Genuinely still open:** a second physician rater for inter-rater kappa (only one physician's adjudication is
+  reflected in the current labels); Guyot KM-curve reconstruction (Master Prompt Section 5.6) — algorithm
+  implemented and self-tested on synthetic data (`src/external/guyot.py`), and a concrete digitization checklist
+  exists (`data/external/km_digitized/DIGITIZATION_CHECKLIST.md`) — but never run on real data, since none of the
+  3 provided source PDFs contain an actual KM curve with a numbers-at-risk table (confirmed by full-text search);
+  and the documented `extract_implicit_new_tavr` corroborating-finding gap (`config/label_overrides.yaml`,
+  Patient_081) is specified but not yet fixed in code.

@@ -57,35 +57,59 @@ def build_patient_features(labels_path: str = "labels.csv") -> tuple[pd.DataFram
     cohort["size_known"] = cohort["index_valve_size_mm"].notna()
 
     # --- time-to-event construction -----------------------------------
-    is_event = cohort["bvf_stage"] == 2
+    # PRIMARY definition: event = bvf_stage==2 AND NOT
+    # pending_physician_reconfirmation. 4/117 patients (058, 061, 068, 081)
+    # have real textual reintervention evidence but a disagreeing,
+    # unresolved physician blind-adjudication determination (see
+    # config/label_overrides.yaml, review/error_catalogue.md) -- team
+    # decision 2026-09-17: do not count them as confirmed events for the
+    # primary analysis while reconfirmation is pending; they are censored
+    # at their last observed note year instead, and re-run as events only
+    # in the SENSITIVITY definition below (which doubles as the Master
+    # Prompt's own "definite-only vs. definite+probable" sensitivity
+    # check, Section 8 Level 5).
+    if "pending_physician_reconfirmation" not in cohort.columns:
+        cohort["pending_physician_reconfirmation"] = False
+    is_pending = cohort["pending_physician_reconfirmation"].fillna(False).astype(bool)
+    is_event_primary = (cohort["bvf_stage"] == 2) & (~is_pending)
+    is_event_sensitivity = cohort["bvf_stage"] == 2  # includes the 4 pending patients as events
+
     t_event = cohort["redo_note_year"] - cohort["index_implant_year"]
     t_censor = cohort["last_note_year"] - cohort["index_implant_year"]
 
-    cohort["event"] = is_event.astype(int)
-    # Interval-censored bounds in years since index implant. Event: [T-1,
-    # T+1], clipped at the event's own lower bound of 0 (can't have had the
-    # reintervention before the valve existed) and additionally floored so
-    # T_lower is never negative. Right-censored: lower bound = observed
-    # follow-up, upper bound = +inf (represented as None / np.inf
-    # downstream).
-    cohort["t_lower"] = None
-    cohort["t_upper"] = None
-    cohort.loc[is_event, "t_lower"] = (t_event[is_event] - 1).clip(lower=0)
-    cohort.loc[is_event, "t_upper"] = t_event[is_event] + 1
-    cohort.loc[~is_event, "t_lower"] = t_censor[~is_event].clip(lower=0)
-    cohort.loc[~is_event, "t_upper"] = float("inf")
+    def _build_time_cols(is_event):
+        # Interval-censored bounds in years since index implant. Event:
+        # [T-1, T+1], clipped at 0. Censored: lower bound = observed
+        # follow-up, upper bound = +inf.
+        t_lower = pd.Series(index=cohort.index, dtype=float)
+        t_upper = pd.Series(index=cohort.index, dtype=float)
+        t_lower[is_event] = (t_event[is_event] - 1).clip(lower=0)
+        t_upper[is_event] = t_event[is_event] + 1
+        t_lower[~is_event] = t_censor[~is_event].clip(lower=0)
+        t_upper[~is_event] = float("inf")
+        return t_lower, t_upper
+
+    cohort["event"] = is_event_primary.astype(int)
+    cohort["t_lower"], cohort["t_upper"] = _build_time_cols(is_event_primary)
+    cohort["event_sensitivity_incl_pending"] = is_event_sensitivity.astype(int)
+    cohort["t_lower_sensitivity"], cohort["t_upper_sensitivity"] = _build_time_cols(is_event_sensitivity)
 
     feature_cols = [
         "profile_key", "index_implant_year", "index_implant_source", "index_approach",
         "index_valve_model", "valve_family", "valve_family_known",
         "index_valve_size_mm", "size_known", "ppm_proxy_flag",
     ]
-    label_cols = ["profile_key", "event", "t_lower", "t_upper", "confidence_tier", "hvd_stage", "bvf_stage"]
+    label_cols = ["profile_key", "event", "t_lower", "t_upper",
+                  "event_sensitivity_incl_pending", "t_lower_sensitivity", "t_upper_sensitivity",
+                  "confidence_tier", "hvd_stage", "bvf_stage", "pending_physician_reconfirmation"]
 
     features_df = cohort[feature_cols].reset_index(drop=True)
     labels_out_df = cohort[label_cols].reset_index(drop=True)
 
-    flow["events"] = int(cohort["event"].sum())
+    flow["events_primary_confirmed_only"] = int(cohort["event"].sum())
+    flow["events_sensitivity_incl_pending"] = int(cohort["event_sensitivity_incl_pending"].sum())
+    flow["n_pending_physician_reconfirmation"] = int(is_pending.sum())
+    flow["pending_patients"] = cohort.loc[is_pending, "profile_key"].tolist()
     flow["censored"] = int((cohort["event"] == 0).sum())
     flow["events_by_approach"] = cohort.loc[cohort["event"] == 1, "index_approach"].value_counts().to_dict()
     flow["missing_valve_family"] = int((~cohort["valve_family_known"]).sum())

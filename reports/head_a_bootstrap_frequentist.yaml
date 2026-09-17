@@ -1,31 +1,31 @@
 - model: literature_prior_only_null
-  apparent_c_index: 0.48148148148148145
+  apparent_c_index: 0.4934210526315789
   bootstrap_corrected_c_index: null
   ci_95_low: null
   ci_95_high: null
   note: Not bootstrapped -- zero fitted parameters, no overfitting for a bootstrap
-    to detect.
+    to detect; see module docstring.
 - model: valve_family_only_weibull
   apparent_c_index: 0.5
   bootstrap_corrected_c_index: 0.5
   ci_95_low: 0.5
   ci_95_high: 0.5
-  n_resamples_used: 369
-  n_resamples_undefined: 131
+  n_resamples_used: 287
+  n_resamples_undefined: 213
   B: 500
 - model: penalized_cox_elastic_net
-  apparent_c_index: 0.5555555555555556
-  bootstrap_corrected_c_index: 0.5457392652595507
-  ci_95_low: 0.4813835470085471
-  ci_95_high: 0.5852897970085471
-  n_resamples_used: 499
-  n_resamples_failed: 1
+  apparent_c_index: 0.5460526315789473
+  bootstrap_corrected_c_index: 0.5355231910720264
+  ci_95_low: 0.4671052631578947
+  ci_95_high: 0.5732215806546022
+  n_resamples_used: 498
+  n_resamples_failed: 2
   B: 500
 - model: xgboost_aft
-  apparent_c_index: 0.5185185185185185
-  bootstrap_corrected_c_index: 0.5077945065981192
-  ci_95_low: 0.4456730293127351
-  ci_95_high: 0.537037037037037
-  n_resamples_used: 500
-  n_resamples_failed: 0
+  apparent_c_index: 0.506578947368421
+  bootstrap_corrected_c_index: 0.49708330575358783
+  ci_95_low: 0.4364283162657775
+  ci_95_high: 0.513157894736842
+  n_resamples_used: 499
+  n_resamples_failed: 1
   B: 500
