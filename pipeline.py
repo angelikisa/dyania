@@ -199,8 +199,17 @@ def _redacted_date_after_cabg_history(text: str, hit: dict, window_before: int =
     return bool(CABG_HISTORY_PATTERN.search(head))
 
 
-def run_pipeline(notes_path: str):
-    df = pd.read_excel(notes_path)
+def run_pipeline(notes_source):
+    """Run phenotyping from either the source workbook or an in-memory frame.
+
+    Accepting a DataFrame lets interfaces pass TXT/CSV notes directly without
+    converting them to a temporary Excel file first. Existing workbook callers
+    remain unchanged.
+    """
+    if isinstance(notes_source, pd.DataFrame):
+        df = notes_source.copy()
+    else:
+        df = pd.read_excel(notes_source)
     # Repair mid-phrase line wraps from the source text conversion BEFORE
     # any extraction — every extractor below (implant-event detection,
     # redo/ViV, gradients, AR grade, SVD-explicit-text) matches literal-
