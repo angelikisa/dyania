@@ -46,7 +46,7 @@ def valve_outlook_curve(
             xanchor="right",
         )
     figure.update_layout(
-        height=400,
+        height=460,
         margin={"l": 98, "r": 18, "t": 36, "b": 64},
         paper_bgcolor=PAPER,
         plot_bgcolor=PAPER,
