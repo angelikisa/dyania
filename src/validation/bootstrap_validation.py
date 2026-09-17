@@ -17,18 +17,23 @@ For each model:
 Resample counts (documented, not silently reduced):
   - Family-only Weibull, penalized Cox, XGBoost AFT: full B=500 (each
     refit costs well under a second; verified below).
-  - Primary hierarchical Bayesian Weibull AFT: B=200, using MAP (maximum a
-    posteriori) point estimates rather than full MCMC for each bootstrap
-    refit. Measured cost: ~9.5s/resample (model construction + find_MAP)
-    on this environment (PyTensor's C backend is unavailable here --  no
-    MSVC Build Tools -- forcing the pure-Python fallback). 500 MCMC
-    refits (the same procedure used for the single reported "apparent"
-    fit) would take multiple hours; 500 MAP refits would still take
-    ~80 minutes. B=200 (~32 minutes) is the documented compromise. The
-    reported "apparent" C-index for the primary model still comes from
-    the full-MCMC posterior (the actually-reported model), not from MAP --
-    only the bootstrap resamples use MAP, for tractability. This is a
-    genuine methodological approximation, stated here rather than hidden.
+  - Primary hierarchical Bayesian Weibull AFT (see bootstrap_bayesian.py):
+    an earlier version of this bootstrap used MAP (maximum a posteriori)
+    point estimates per resample instead of full MCMC, which meant the
+    primary model's row was not evaluated the same way as the other four
+    (a real methodological asymmetry, not just a resample-count
+    difference). Superseded: bootstrap_bayesian.py now uses the SAME full
+    4-chain, 2000-tune+2000-draw MCMC procedure as the apparent fit for
+    every resample -- methodologically identical to how the other four
+    comparators are bootstrapped. The only remaining difference is B=100
+    (not 500): full-MCMC-per-resample is calibrated at ~73s/resample on
+    this environment (PyTensor's C backend unavailable -- no MSVC Build
+    Tools -- forcing the pure-Python fallback), so B=500 would take
+    ~10.1 hours; B=100 (~2 hours) was the chosen tradeoff to keep the
+    FITTING METHOD identical while keeping wall-clock time reasonable.
+    The resulting interval is consequently noisier than the B=500
+    comparators' intervals -- stated explicitly in
+    reports/head_a_validation_report.md, not hidden.
   - Literature-prior-only (null): NOT bootstrapped. This model has zero
     fitted parameters -- its prediction is the literature point regardless
     of which patients are resampled, so there is no overfitting for a

@@ -100,18 +100,22 @@ events vs. 99 patients) is handled by the Bayesian model's own likelihood and pr
 Uno's C-index (approximated here via `lifelines.utils.concordance_index` on a midpoint-time approximation, since
 scikit-survival's IPCW C-index implementation could not be installed in this environment — see `model/approach.md`
 §2), reported **Harrell bootstrap-corrected with 95% CI**, not as a naive in-sample point estimate (Master Prompt
-§8 Level 3): primary Bayesian Weibull AFT 0.611 apparent → **0.588 corrected, 95% CI [0.417, 0.735]**; penalized
+§8 Level 3): primary Bayesian Weibull AFT 0.611 apparent → **0.591 corrected, 95% CI [0.437, 0.725]**; penalized
 Cox 0.556 → 0.546, CI [0.481, 0.585]; XGBoost AFT 0.519 → 0.508, CI [0.446, 0.537]; valve-family-only Weibull
 collapses to a degenerate 0.500 (most bootstrap resamples couldn't even be fit — zero events in a resampled
-family); literature-prior-only (null, not bootstrapped — zero fitted parameters) apparent C-index is 0.481, i.e.
-*below chance* on this cohort. Every interval is wide and several cross 0.5 (chance) — including the primary
-model's own lower bound — reported explicitly rather than only as a point estimate. **The primary model's row is
-not on equal methodological footing with the other three:** it was bootstrapped at B=200 using MAP point
-estimates per resample, not the full B=500/full-MCMC procedure used for the other comparators, for documented
-computational-tractability reasons (`model/approach.md` §8, `reports/head_a_validation_report.md` Level 3) — its
-having the highest corrected point estimate should not be read as a controlled, like-for-like comparison. Posterior
-diagnostics (R-hat, ESS) for the primary model's one reported full-MCMC fit converged cleanly (R-hat = 1.00, ESS in
-the thousands, 8000 post-warmup draws across 4 chains). Time-dependent AUC, integrated Brier score, and calibration
+family, and the ones that could fit used only a single family whose patients all share one constant predicted
+value, mathematically guaranteeing ties); literature-prior-only (null, not bootstrapped — zero fitted parameters)
+apparent C-index is 0.481, i.e. *below chance* on this cohort. Every interval is wide and several cross 0.5
+(chance) — including the primary model's own lower bound — reported explicitly rather than only as a point
+estimate. **The primary model's row now uses the same full-MCMC fitting procedure as the other three bootstrapped
+comparators** (an earlier version used MAP point estimates, a real asymmetry — fixed by re-running with full MCMC;
+the result moved only slightly, 0.588→0.591). The one remaining, stated difference is resample count: B=100 for
+the primary model vs. B=500 for the others, a computational-tractability choice (full-MCMC-per-resample calibrated
+at ~73s; B=500 would take ~10 hours) documented in `model/approach.md` §8 and `reports/head_a_validation_report.md`
+Level 3, which makes this row's CI somewhat noisier than the B=500 rows'. Posterior diagnostics (R-hat, ESS) for
+the primary model's one reported full-MCMC fit converged cleanly (R-hat = 1.00, ESS in the thousands, 8000
+post-warmup draws across 4 chains); the B=100 bootstrap resamples' own diagnostics were somewhat noisier (mean max
+R-hat 1.022, ~1.1% divergence rate), as expected for 100 unattended refits vs. one carefully monitored fit. Time-dependent AUC, integrated Brier score, and calibration
 plots are designed but not yet computed.
 
 ### Subgroup Analyses
@@ -126,8 +130,8 @@ possible (age unrecoverable, see `model/approach.md` §3).
 ### Comparator / Baseline
 Four comparators, all reported alongside the primary model rather than in isolation (§5.4 requirement):
 literature-prior-only (null), valve-family-only frequentist Weibull, penalized Cox (elastic net), XGBoost AFT. The
-primary model's bootstrap-corrected C-index edge over all three data-driven comparators (0.588 vs. 0.546/0.508/
-0.500 corrected — see Evaluation Metrics above for full CIs and the noted B=200-vs-B=500 methodological asymmetry,
+primary model's bootstrap-corrected C-index edge over all three data-driven comparators (0.591 vs. 0.546/0.508/
+0.500 corrected — see Evaluation Metrics above for full CIs and the noted B=100-vs-B=500 resample-count difference,
 and the family-only model is literally undefined for 2 of 3 observed families due to zero events) is presented as
 evidence that literature-informed partial pooling is doing real work at this sample size — not as proof of
 clinical utility, and not as a controlled head-to-head race given that asymmetry.

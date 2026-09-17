@@ -1,12 +1,27 @@
 """
 Harrell bootstrap optimism correction for the PRIMARY model (hierarchical
-Bayesian Weibull AFT), using MAP point estimates per resample for
-computational tractability -- see bootstrap_validation.py's module
-docstring for the full justification and the documented B=200 (not 500)
-resample count.
+Bayesian Weibull AFT) using the SAME full 4-chain, 2000-tune + 2000-draw
+MCMC procedure as the one reported "apparent" fit (reports/head_a_posterior.nc)
+-- i.e. no MAP shortcut. This removes the MAP-vs-full-MCMC methodological
+asymmetry the first version of this script had against the other four
+comparators.
+
+What is still different from the other four comparators, and why (stated
+explicitly, not hidden): B=100 here, not B=500. Calibrated directly on this
+environment (PYTENSOR_FLAGS="cxx=" pure-Python fallback, no C compiler
+available): one full 4-chain 2000+2000 refit on a bootstrap-resampled
+dataset measured at ~73s (vs. ~9.5s for a MAP refit). 500 resamples at that
+rate would take ~10.1 hours; B=100 (~2 hours) was chosen as the resample
+count that keeps the FITTING METHOD identical across all five models
+(the thing that actually matters for a fair comparison) while keeping
+wall-clock time reasonable for this session. The resulting interval is
+therefore noisier (wider, less stable percentile estimates) than the
+B=500 comparators' intervals -- stated in the output and in
+reports/head_a_validation_report.md, not smoothed over. A full B=500
+re-run remains possible as a background job if time allows later.
 
 Run with: PYTENSOR_FLAGS="cxx=" PYTHONIOENCODING=utf-8 python src/validation/bootstrap_bayesian.py
-Expected wall-clock: ~200 x ~9.5s =~ 32 minutes on this environment.
+Expected wall-clock: ~100 x ~73s =~ 2 hours on this environment.
 """
 from __future__ import annotations
 
@@ -15,6 +30,7 @@ import time
 import warnings
 from pathlib import Path
 
+import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
@@ -26,7 +42,9 @@ from weibull_aft_bayes import build_model  # noqa: E402
 
 warnings.filterwarnings("ignore")
 SEED = 20260917
-B = 200
+B = 100
+MCMC_KWARGS = dict(draws=2000, tune=2000, chains=4, cores=1, target_accept=0.95, progressbar=False)
+CHECKPOINT_PATH = "reports/head_a_bootstrap_bayesian_checkpoint.csv"
 
 
 def load_cohort():
@@ -49,18 +67,19 @@ def resample(features: pd.DataFrame, labels: pd.DataFrame, rng: np.random.Genera
     return bf, bl
 
 
-def median_survival_from_map(map_est: dict, d_eval: pd.DataFrame, features_eval: pd.DataFrame,
-                              approaches: list[str], families: list[str], priors: dict) -> np.ndarray:
+def median_survival_from_posterior(idata, d_eval: pd.DataFrame,
+                                    approaches: list[str], families: list[str]) -> np.ndarray:
     """Compute median survival for arbitrary evaluation rows from a fitted
-    MAP point estimate (mu_approach, family_offset, beta_ppm, shape_k),
-    without re-invoking PyMC -- pure numpy, so it can score the ORIGINAL
-    cohort using a model that was fit on a bootstrap sample."""
+    MCMC posterior's POSTERIOR MEAN (mu_approach, family_offset, beta_ppm,
+    shape_k) -- pure numpy, so it can score the ORIGINAL cohort using a
+    model that was fit (via full MCMC) on a bootstrap sample."""
+    post = idata.posterior
     approach_idx = {a: i for i, a in enumerate(approaches)}
     family_idx = {f: i for i, f in enumerate(families)}
-    k = float(map_est["shape_k"])
-    mu_approach = np.asarray(map_est["mu_approach"])
-    family_offset = np.asarray(map_est["family_offset"])
-    beta_ppm = float(map_est["beta_ppm"])
+    k = float(post["shape_k"].mean())
+    mu_approach = post["mu_approach"].mean(dim=["chain", "draw"]).values
+    family_offset = post["family_offset"].mean(dim=["chain", "draw"]).values
+    beta_ppm = float(post["beta_ppm"].mean())
 
     log_scale = np.array([mu_approach[approach_idx.get(a, 0)] for a in d_eval["index_approach"]])
     fam_term = np.array([
@@ -83,25 +102,35 @@ def run():
         priors = yaml.safe_load(f)
 
     # --- apparent: use the ALREADY-FITTED full-MCMC posterior (the actually reported model) ---
-    import arviz as az
-    idata = az.from_netcdf("reports/head_a_posterior.nc")
-    med_surv_app = idata.posterior["median_survival_years"].mean(dim=["chain", "draw"]).values
+    idata_app = az.from_netcdf("reports/head_a_posterior.nc")
+    med_surv_app = idata_app.posterior["median_survival_years"].mean(dim=["chain", "draw"]).values
     c_app = concordance_index(d_full["t_approx"], med_surv_app, d_full["event"])
     print(f"Apparent C-index (full MCMC posterior, reported model): {c_app:.4f}")
 
-    model_full, meta_full = build_model(features_full, labels_full, priors)
-    approaches, families = meta_full["approaches"], meta_full["families"]
+    # --- resume from checkpoint if one exists (a prior run was killed by the
+    # environment at 70/100 with no error -- see git history / conversation
+    # for context; this makes that non-repeatable) ---
+    ckpt_path = Path(CHECKPOINT_PATH)
+    if ckpt_path.exists():
+        ckpt_df = pd.read_csv(ckpt_path)
+        start_b = len(ckpt_df)
+        optimisms = ckpt_df["optimism"].tolist()
+        max_rhats = ckpt_df["max_rhat"].dropna().tolist()
+        n_divergences = ckpt_df["n_divergences"].dropna().tolist()
+        print(f"Resuming from checkpoint: {start_b} resamples already done.")
+    else:
+        with open(ckpt_path, "w", encoding="utf-8") as f:
+            f.write("resample,optimism,max_rhat,n_divergences\n")
+        start_b, optimisms, max_rhats, n_divergences = 0, [], [], []
 
-    rng = np.random.default_rng(SEED)
-    optimisms = []
+    rng = np.random.default_rng(SEED + start_b)  # different seed offset per resume batch -- fine for a bootstrap CI, doesn't need to replay the exact same draws
     t_start = time.time()
-    for b in range(B):
-        t0 = time.time()
+    for b in range(start_b, B):
         bf, bl = resample(features_full, labels_full, rng)
         try:
             model_b, meta_b = build_model(bf, bl, priors)
             with model_b:
-                map_b = pm.find_MAP(progressbar=False)
+                idata_b = pm.sample(random_seed=SEED + b, **MCMC_KWARGS)
         except Exception as e:
             print(f"  resample {b}: FAILED to fit ({e}); skipping")
             continue
@@ -111,28 +140,54 @@ def run():
         d_boot["t_approx"] = np.clip(
             np.where(d_boot["event"] == 1, (d_boot["t_lower"] + d_boot["t_upper"]) / 2, d_boot["t_lower"]), 0.5, None)
 
-        pred_boot = median_survival_from_map(map_b, d_boot, bf, meta_b["approaches"], meta_b["families"], priors)
-        pred_orig = median_survival_from_map(map_b, d_full, features_full, meta_b["approaches"], meta_b["families"], priors)
+        pred_boot = median_survival_from_posterior(idata_b, d_boot, meta_b["approaches"], meta_b["families"])
+        pred_orig = median_survival_from_posterior(idata_b, d_full, meta_b["approaches"], meta_b["families"])
 
         c_boot = concordance_index(d_boot["t_approx"], pred_boot, d_boot["event"])
         c_orig = concordance_index(d_full["t_approx"], pred_orig, d_full["event"])
-        optimisms.append(c_boot - c_orig)
+        opt = c_boot - c_orig
+        optimisms.append(opt)
 
-        if (b + 1) % 20 == 0:
+        row_rhat, row_div = "", ""
+        try:
+            summ = az.summary(idata_b, var_names=["shape_k", "mu_approach"])
+            row_rhat = float(summ["r_hat"].max())
+            row_div = int(idata_b.sample_stats["diverging"].sum())
+            max_rhats.append(row_rhat)
+            n_divergences.append(row_div)
+        except Exception:
+            pass
+
+        with open(ckpt_path, "a", encoding="utf-8") as f:
+            f.write(f"{b},{opt},{row_rhat},{row_div}\n")
+
+        if (b + 1) % 10 == 0:
             elapsed = time.time() - t_start
-            print(f"  {b+1}/{B} done, {elapsed:.0f}s elapsed, ~{elapsed/(b+1)*(B-b-1):.0f}s remaining, "
+            print(f"  {b+1}/{B} done, {elapsed:.0f}s elapsed, ~{elapsed/(b+1-start_b)*(B-b-1):.0f}s remaining, "
                   f"running mean optimism={np.mean(optimisms):.4f}", flush=True)
 
     corrected = c_app - float(np.mean(optimisms))
     dist = c_app - np.array(optimisms)
     lo, hi = np.percentile(dist, [2.5, 97.5])
 
-    result = dict(model="primary_hierarchical_bayesian_weibull_aft", apparent_c_index=float(c_app),
-                  bootstrap_corrected_c_index=float(corrected), ci_95_low=float(lo), ci_95_high=float(hi),
-                  n_resamples_used=len(optimisms), B=B,
-                  method_note="Bootstrap resamples fit via MAP (not full MCMC) for tractability; "
-                               "apparent C-index uses the full-MCMC posterior. See module docstring.")
+    result = dict(
+        model="primary_hierarchical_bayesian_weibull_aft", apparent_c_index=float(c_app),
+        bootstrap_corrected_c_index=float(corrected), ci_95_low=float(lo), ci_95_high=float(hi),
+        n_resamples_used=len(optimisms), B=B,
+        mean_max_rhat=float(np.mean(max_rhats)) if max_rhats else None,
+        mean_n_divergences=float(np.mean(n_divergences)) if n_divergences else None,
+        method_note="Bootstrap resamples fit via the SAME full 4-chain 2000-tune+2000-draw MCMC procedure "
+                     "as the apparent model (no MAP shortcut) -- methodologically identical to the apparent "
+                     "fit and to how the other 4 comparators were bootstrapped. B=100, not 500 (the other 4 "
+                     "comparators used 500): full-MCMC-per-resample was calibrated at ~73s/resample "
+                     "(~10.1h for B=500); B=100 (~2h) keeps the fitting METHOD identical across all 5 models "
+                     "while keeping wall-clock time reasonable. This interval is consequently noisier "
+                     "(wider/less stable) than the B=500 comparators' intervals -- stated explicitly, not "
+                     "hidden. See module docstring and reports/head_a_validation_report.md.",
+    )
     print("\nFINAL:", result)
+    import json
+    result = json.loads(json.dumps(result, default=lambda o: float(o) if isinstance(o, np.floating) else str(o)))
     with open("reports/head_a_bootstrap_bayesian.yaml", "w", encoding="utf-8") as f:
         yaml.safe_dump(result, f, sort_keys=False, allow_unicode=True)
     print("wrote reports/head_a_bootstrap_bayesian.yaml")

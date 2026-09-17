@@ -143,21 +143,26 @@ pending physician sign-off.
 - **n=99/11 events (Head A).** Every model here — including the primary one — should be read as demonstrating a
   *method*, not a validated clinical tool. **Bootstrap-corrected C-index with 95% CI, not the naive in-sample
   value** (Harrell optimism correction, `reports/head_a_validation_report.md` Level 3 for full methodology):
-  **primary Bayesian Weibull AFT 0.611 apparent → 0.588 corrected, 95% CI [0.417, 0.735]**; penalized Cox
+  **primary Bayesian Weibull AFT 0.611 apparent → 0.591 corrected, 95% CI [0.437, 0.725]**; penalized Cox
   0.556 apparent → 0.546 corrected, CI [0.481, 0.585]; XGBoost AFT 0.519 → 0.508, CI [0.446, 0.537];
   valve-family-only Weibull collapses to a **degenerate** 0.500 (131/500 bootstrap resamples couldn't even be fit
-  at all — zero events in a resampled family — so [0.500, 0.500] reflects total non-identifiability, not a
-  precise estimate); literature-prior-only (null, not bootstrapped — zero fitted parameters) apparent C-index is
-  0.481, i.e. *below chance* on this specific cohort. Every interval is wide, several cross 0.5 — including, at
-  its lower bound, the primary model itself — stated explicitly rather than only reporting the point estimate.
-  **These five rows are NOT evaluated the same way and should not be read as a like-for-like race:** the primary
-  model's bootstrap used B=200 with MAP point estimates per resample (vs. the full 4-chain MCMC used for its own
-  0.611 apparent value), while the other three bootstrapped comparators used the full B=500 with their own actual
-  fitting procedure throughout. This was a stated computational-tractability choice (full-MCMC resampling would
-  take multiple hours; see `bootstrap_bayesian.py`), not a hidden shortcut — but it means "the primary model has
-  the highest bootstrap-corrected point estimate (0.588)" carries that asymmetry and is not a controlled
-  comparison. The null model scoring below chance is itself informative: it shows the literature ranking and this
-  cohort's own empirical event ordering disagree enough that neither a literature-only nor a purely data-driven
+  at all — zero events in a resampled family, and confirmed by direct instrumentation that the remaining 369
+  resamples all scored patients from a single family sharing one constant predicted value, so [0.500, 0.500] is a
+  mathematically guaranteed tie, not an estimate of anything); literature-prior-only (null, not bootstrapped —
+  zero fitted parameters) apparent C-index is 0.481, i.e. *below chance* on this specific cohort. Every interval
+  is wide, several cross 0.5 — including, at its lower bound, the primary model itself — stated explicitly rather
+  than only reporting the point estimate. **The primary model's bootstrap now uses the same full 4-chain MCMC
+  procedure as its own apparent fit and as the other three bootstrapped comparators** (an earlier version used
+  MAP point estimates per resample, a real methodological asymmetry — fixed by re-running with full MCMC; the
+  result barely moved, 0.588→0.591, which is itself a useful robustness check). **One difference remains and is
+  stated plainly:** B=100 for the primary model vs. B=500 for the other three — full-MCMC-per-resample was
+  calibrated at ~73s/resample (B=500 would take ~10 hours), so B=100 (~57 min) was chosen to keep the fitting
+  *method* identical while keeping wall-clock time reasonable; this row's CI is correspondingly a bit noisier, and
+  its per-resample diagnostics (mean max R-hat 1.022, ~1.1% divergence rate) are worse than the single carefully-
+  monitored apparent fit's (R-hat 1.00, ~0 divergences) — both reported in full in
+  `reports/head_a_validation_report.md`. The null model scoring below chance is itself informative: it shows the
+  literature ranking and this cohort's own empirical event ordering disagree enough that neither a literature-only
+  nor a purely data-driven
   fit is adequate alone, which is the concrete justification for the Bayesian-update framing used here.
 - **All 11 observed events are SAVR-index.** TAVR-index reinterventions are essentially unobserved in this
   notes-only extract; the TAVR-arm posterior is almost entirely prior-driven. This may reflect this being a younger

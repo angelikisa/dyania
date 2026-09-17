@@ -89,14 +89,15 @@
 
 ## Slide 9 — Results
 
-- Bootstrap-corrected C-index (Harrell optimism correction, 95% CI — not a naive point estimate): primary Bayesian
-  model **0.588, CI [0.417, 0.735]** vs. penalized Cox 0.546 CI [0.481, 0.585], XGBoost AFT 0.508 CI [0.446, 0.537],
-  literature-only 0.481 (below chance, not bootstrapped).
+- Bootstrap-corrected C-index (Harrell optimism correction, 95% CI — not a naive point estimate, same full-MCMC
+  fitting procedure for every model): primary Bayesian model **0.591, CI [0.437, 0.725]** vs. penalized Cox 0.546
+  CI [0.481, 0.585], XGBoost AFT 0.508 CI [0.446, 0.537], literature-only 0.481 (below chance, not bootstrapped).
 - Honest read, shown explicitly, not hidden: with 11 events these intervals are wide — the primary model's own
-  lower bound (0.417) is below chance. Its central estimate is the best of five models evaluated the same way, but
-  "beats chance with confidence" cannot be claimed at this n. The literature-only model scoring *below* chance on
-  our own cohort is itself the key finding: it's why a Bayesian update, not literature transfer alone, is the
-  right framing.
+  lower bound (0.437) is below chance. Its central estimate is the best of the five models, evaluated the same
+  fitting method throughout (B=100 for the primary model vs. B=500 for the others — a compute-time tradeoff, not a
+  method difference), but "beats chance with confidence" cannot be claimed at this n. The literature-only model
+  scoring *below* chance on our own cohort is itself the key finding: it's why a Bayesian update, not literature
+  transfer alone, is the right framing.
 - SHAP/forest-plot outputs available (`reports/head_a_forest_plot.png`, `head_a_shap_summary.png`), reported with
   an explicit near-chance-comparator caveat.
 

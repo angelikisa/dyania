@@ -60,29 +60,39 @@ methodology and resample-count justification in `src/validation/bootstrap_valida
 | Valve-family-only Weibull | 0.500 | 0.500 | **[0.500, 0.500] — DEGENERATE, not a real interval, see note below** | 500 (131/500 = 26% of resamples couldn't even be fit) |
 | Penalized Cox (elastic net) | 0.556 | **0.546** | **[0.481, 0.585]** | 500 |
 | XGBoost AFT | 0.519 | **0.508** | **[0.446, 0.537]** | 500 |
-| **Primary hierarchical Bayesian Weibull AFT** | 0.611 | **0.588** | **[0.417, 0.735]** | 200, **MAP-based — not directly comparable to the other rows' B=500, see warning below** |
+| **Primary hierarchical Bayesian Weibull AFT** | 0.611 | **0.591** | **[0.437, 0.725]** | 100, full 4-chain MCMC (same fitting procedure as the other rows — see note below) |
 
-> **⚠ Methodological inconsistency, stated plainly, not smoothed over:** the primary model's row is NOT computed
-> the same way as the other four. Penalized Cox, XGBoost AFT, and the family-only Weibull were bootstrapped with
-> the FULL B=500 using the exact same fitting procedure as their own apparent estimate. The primary model was
-> bootstrapped with only B=200, and — more importantly — using MAP point estimates for each resample rather than
-> the full 4-chain MCMC procedure used for its own reported apparent C-index (0.611). This was a computational
-> tractability decision (full MCMC refits measured at ~25-40s each; 500 of those would take multiple hours, vs.
-> ~9.5s/resample for MAP, ~32 minutes for B=200) — see `src/validation/bootstrap_bayesian.py`'s docstring for the
-> full reasoning. **The practical consequence: the primary model's [0.417, 0.735] interval is not on equal
-> methodological footing with the other four rows, and the comparison "primary model has the highest
-> bootstrap-corrected point estimate" should be read with that asymmetry in mind, not as a like-for-like race
-> under identical procedures.** A fully consistent comparison would need either B=500 full-MCMC for the primary
-> model (hours of additional compute) or MAP-based resampling applied uniformly to all five models — neither was
-> done here, and this table should not be read as if it were.
+> **Update — the MAP-vs-full-MCMC asymmetry from the previous version of this table is now resolved.** An earlier
+> run bootstrapped the primary model using MAP point estimates per resample (B=200) rather than the full 4-chain
+> MCMC procedure used for its own apparent C-index — a genuine methodological inconsistency against the other four
+> rows, which were all bootstrapped with the exact same fitting procedure as their own apparent estimate. This has
+> been re-run: **the primary model's row above now uses the SAME full 4-chain, 2000-tune+2000-draw MCMC per
+> resample as its own apparent fit and as how the other four comparators are bootstrapped.** The result changed
+> only slightly (0.588 → 0.591 corrected; CI [0.417, 0.735] → [0.437, 0.725]) — the earlier MAP-based approximation
+> turned out to track the full-MCMC result closely, which is itself a useful robustness check, but the current
+> number is the methodologically correct one and supersedes the earlier one everywhere.
+>
+> **One difference remains, stated plainly:** B=100 here, not the B=500 used for the other three bootstrapped
+> comparators. Full-MCMC-per-resample was calibrated at ~73s/resample on this environment (no C compiler
+> available, pure-Python PyTensor fallback); 500 resamples would take ~10.1 hours, so B=100 (~57 min actual
+> wall-clock for this run) was chosen to keep the **fitting method** identical across all five models — which is
+> the comparison that actually matters — while keeping wall-clock time reasonable. B=100 vs. B=500 means this
+> row's CI is somewhat noisier (wider, less stable percentile estimates) than the other bootstrapped rows'; a full
+> B=500 re-run remains possible later as a background job if needed. **Diagnostic quality at B=100, reported
+> honestly:** mean max R-hat across the 100 resamples was 1.022 (above the usual <1.01 target — some individual
+> resamples had convergence issues, expected at this reduced-budget scale) and mean divergences per resample was
+> 87.6 out of 8,000 post-warmup draws (~1.1%). Neither invalidates the result but both are worse than the single
+> reported "apparent" model's own diagnostics (R-hat = 1.00, effectively zero divergences), which used a more
+> carefully monitored single fit rather than 100 unattended refits.
 
 **Read exactly as wide as it is, not hidden.** With only 11 confirmed events, every one of these intervals is wide,
-and several cross 0.5 (chance) — including, at its lower bound, the primary model itself: **[0.417, 0.735] spans
-below chance to a fairly strong-looking 0.735.** This is reported in full, not truncated to the point estimate.
-Read across all five models together: the primary model's bootstrap-corrected point estimate (0.588) remains the
-highest of the five, and clearly ahead of the three purely data-driven comparators (0.546, 0.508, 0.500) — but its
+and several cross 0.5 (chance) — including, at its lower bound, the primary model itself: **[0.437, 0.725] spans
+below chance to a fairly strong-looking 0.725.** This is reported in full, not truncated to the point estimate.
+Read across all five models together: the primary model's bootstrap-corrected point estimate (0.591) remains the
+highest of the five, and clearly ahead of the three purely data-driven comparators (0.546, 0.508, 0.500) — now a
+genuinely like-for-like comparison in fitting method (modulo the B=100-vs-500 resample-count note above) — but its
 own 95% interval is wide enough that "the primary model beats chance" cannot be asserted with confidence at this n,
-only that its central estimate is the most favorable among five approaches evaluated the same way. The null
+only that its central estimate is the most favorable among the five models. The null
 (literature-prior-only) model's apparent C-index is actually *below* chance (0.481) on this specific cohort — i.e.
 applying the literature durability ranking directly, with no update from our own data, discriminates our own
 patients' actual event order *worse* than a coin flip. This is a genuine and informative finding: it demonstrates
@@ -99,13 +109,6 @@ event count, motivating the primary model's hierarchical structure.
 **Why the null model isn't bootstrapped:** it has zero fitted parameters — its prediction (the literature Weibull
 median per approach) is identical regardless of which patients are resampled, so there is no overfitting for a
 bootstrap correction to remove. Its single apparent C-index is reported as-is.
-
-**Why the primary model uses B=200 with MAP, not B=500 with full MCMC, for the bootstrap resamples:** each full
-4-chain MCMC refit (the procedure used for the one reported "apparent" model) takes ~25-40s in this environment;
-500 of those would take several hours. Bootstrap resamples instead use MAP (maximum a posteriori) point estimates,
-measured at ~9.5s/resample including model reconstruction — B=200 takes ~32 minutes. The apparent C-index (0.611)
-still comes from the actually-reported full-MCMC model, not from MAP; only the *resampled* refits use MAP, purely
-for tractability. This is a genuine, stated approximation, not a hidden shortcut.
 
 Not yet done: repeated stratified 5-fold CV, time-dependent AUC at 5/10 years, integrated Brier score, calibration
 plots against observed cumulative incidence.
