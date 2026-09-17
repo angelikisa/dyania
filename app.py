@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from tempfile import TemporaryDirectory
 
 import pandas as pd
 import streamlit as st
@@ -45,10 +44,11 @@ def get_posterior(path: str):
 def parse_text_notes(text: str) -> pd.DataFrame:
     """Parse ValveVie's small, readable longitudinal-note text format."""
 
+    text = text.lstrip("\ufeff")
     records = []
-    for block in re.split(r"\n\s*--- NOTE ---\s*\n", text.strip()):
+    for block in re.split(r"\r?\n\s*--- NOTE ---\s*\r?\n", text.strip()):
         match = re.match(
-            r"PROFILE KEY:\s*(.+?)\s*\nTYPE:\s*(.+?)\s*\nSERVICE DATE:\s*(\d{4})\s*\nNOTES:\s*\n([\s\S]+)",
+            r"PROFILE KEY:\s*(.+?)\s*\r?\nTYPE:\s*(.+?)\s*\r?\nSERVICE DATE:\s*(\d{4})\s*\r?\nNOTES:\s*\r?\n([\s\S]+)",
             block.strip(),
             re.IGNORECASE,
         )
@@ -61,7 +61,7 @@ def parse_text_notes(text: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Reading notes…")
 def process_notes_file(file_bytes: bytes, filename: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run the repository's deterministic NLP pipeline on an uploaded workbook."""
+    """Read an uploaded notes file and run the deterministic NLP pipeline."""
 
     from pipeline import run_pipeline
 
@@ -73,7 +73,11 @@ def process_notes_file(file_bytes: bytes, filename: str) -> tuple[pd.DataFrame, 
         from io import BytesIO
         frame = pd.read_csv(BytesIO(file_bytes))
     elif suffix == ".txt":
-        frame = parse_text_notes(file_bytes.decode("utf-8"))
+        try:
+            text = file_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("cp1252")
+        frame = parse_text_notes(text)
     else:
         raise ValueError("Supported formats are XLSX, CSV and TXT.")
 
@@ -81,10 +85,7 @@ def process_notes_file(file_bytes: bytes, filename: str) -> tuple[pd.DataFrame, 
     if not required.issubset(frame.columns):
         raise ValueError(f"Missing columns: {', '.join(sorted(required - set(frame.columns)))}")
 
-    with TemporaryDirectory() as directory:
-        temporary_path = Path(directory) / "uploaded_notes.xlsx"
-        frame.to_excel(temporary_path, index=False)
-        return run_pipeline(str(temporary_path))
+    return run_pipeline(frame)
 
 
 def optional_text(value) -> str | None:
@@ -294,7 +295,15 @@ try:
     patient = patient_from_pipeline(row)
     audit = audit_from_pipeline(uploaded_audit, patient.profile_key)
 except Exception as exc:
-    st.error("We could not read this notes file.")
+    if isinstance(exc, UnicodeError):
+        message = "The text encoding is not supported. Save the file as UTF-8 and try again."
+    elif isinstance(exc, ValueError):
+        message = str(exc)
+    elif "openpyxl" in str(exc).lower():
+        message = "Excel support is not installed. Run: pip install -r requirements-ui.txt"
+    else:
+        message = "The notes could not be processed."
+    st.error(message)
     with st.expander("Technical detail"):
         st.code(str(exc))
     st.stop()
