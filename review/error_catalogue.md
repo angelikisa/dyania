@@ -280,3 +280,83 @@ the fix.
   A/B training.
 - Head A/B training now proceeds on the corrected `labels.csv` (Module 4 onward), in parallel with physician
   completion of `review/adjudication_form.xlsx` (§6) rather than blocked on it, per team instruction.
+
+## 8. Full-cohort adjudication findings and label overrides (2026-09-17)
+
+`review/adjudication_form.xlsx` was completed (all 117 patients, independently verified — 11/117 rows disagreed
+with `labels.csv` before any of the analysis below). Reintervention detector against the full blind read:
+**precision 0.30, recall 0.50, F1 0.375**; HVD-stage weighted κ=0.046; SVD-present κ=0.101 — all far below the
+seed-set numbers, and explicitly NOT smoothed over (full explanation of why a blind full-cohort read is expected
+to score lower than an anchored seed check: `reports/head_a_validation_report.md`, Level 1).
+
+Of the 11 original BVF-stage disagreements, mechanical re-verification against raw note text (not
+reinterpretation — checking what the note literally says) and a definitional-schema fix resolved 6:
+
+| Patient | Resolution |
+|---|---|
+| 071 | **Code fix.** `REDO_NARRATIVE`'s generic "redo"+"sternotomy" alternative matched a *mitral* valve replacement narrative, not the patient's aortic prosthesis. Fixed with a valve-context disambiguation filter (`pipeline._wrong_valve_context`), verified against Patient_017 (same ambiguity pattern, resolves correctly) before a corpus-wide re-run confirmed only 071 changed. |
+| 103 | **Definitional split, not an error.** Added `any_AV_reintervention` (any-cause) and `SVD_specific_BVF` (`bvf_stage==2`, structural-cause-only) as separate `labels.csv` columns. Physician's BVF=2 matches `any_AV_reintervention=True`; `SVD_specific_BVF=False` (endocarditis-excluded) is unchanged and still correct. Re-scoring all 11 disagreements against `any_AV_reintervention` instead: only 103 resolves — confirms the other 10 are substantive, not a definitional artifact. |
+| 035 | **Pipeline correct, raw text confirms.** "moderate prosthetic valve AI by 11/2018" (explicit structural regurgitation finding) + explicit ViV-TAVR completion narrative. Physician form entry not supported by the note. |
+| 044 | **Pipeline correct, raw text confirms.** Full note (not the truncated evidence snippet) is an unambiguous first-person account by the treating cardiologist of an emergent ViV-TAVR with full technical detail. Physician form entry not supported by the note. |
+| 048 | **Pipeline correct, raw text confirms.** Note states explicitly "he did not recommend another aortic valve replacement" — the real reintervention discussion is for **mitral** stenosis. Confirms the Master Prompt's own known-false-positive characterization of this patient too. |
+| 010 | **Pipeline correct, raw text confirms.** The only TAVR event in either note is the index procedure itself (structured field: "Valve in Valve: No"). No second event anywhere. |
+
+**One confirmed genuine pipeline false positive, corrected:**
+
+- **Patient_077**: "aortic valve stenosis s/p TAVR" appears only in a coded past-history list, during a visit
+  explicitly for pacemaker/AV-node-ablation follow-up, with zero narrative or hemodynamic support for a new event.
+  A general automated fix was attempted (suppress any redo/ViV/TAVR mention whose sentence states an unrelated
+  visit reason) and **rejected after corpus-wide testing showed it would wrongly suppress Patient_036**, an
+  already-confirmed true positive, plus several other genuine post-TAVR follow-up visits (002, 080) worded
+  similarly — the heuristic could not reliably distinguish "here for an unrelated reason, valve mentioned only in
+  passing" from "here for a routine post-TAVR follow-up, which is itself confirmatory." Applied as a one-patient
+  manual correction instead (`config/label_overrides.yaml`, `confirmed_corrections`): `bvf_stage`/`hvd_stage`
+  reset to 0, `confidence_tier` → `censored`.
+
+**Four patients were flagged as genuinely unresolved (`pending_physician_reconfirmation`), and Head A was run on
+that provisional state while awaiting a response — see the team decision recorded below, kept for the audit
+trail:**
+
+| Patient | Pipeline evidence | Physician determination (full-cohort adjudication) | Status at time of flagging |
+|---|---|---|---|
+| 058 | ViV, explicit "s/p TAVR... now with prosthetic AS" | BVF=0, definite-not-SVD | No counter-explanation found in available text |
+| 061 | Completed redo (homograft), documented negative endocarditis workup | BVF=0, HVD=2/SVD=Y (signal acknowledged, not scored as BVF) | Internally distinctive determination, not fully explained by text |
+| 068 | Pre/post-TAVR gradient 43→10 mmHg (textbook stenosis-intervention signature) | BVF=0, definite-not-SVD | No counter-explanation found |
+| 081 | SAVR 2012 → TAVR ~2025 (13y gap, matches cohort's own SVD timing) | BVF=0, HVD=2/SVD=Y (signal acknowledged, not scored as BVF) | Most genuinely ambiguous — note available doesn't narrate the indication |
+
+(Interim team decision, superseded below: proceed with Head A on the provisional `probable`/pending state rather
+than wait, per `config/label_overrides.yaml`'s `pending_physician_reconfirmation` category as it existed at that
+point — `bvf_stage`/`hvd_stage` left unchanged, only `confidence_tier` downgraded.)
+
+### Physician sign-off received (2026-09-17) — final reconciliation, resolved before the submission deadline
+
+Physician sign-off was obtained on all four flagged patients before final submission. **Resolution was
+asymmetric, not a blanket acceptance of either side:**
+
+- **058, 061, 068 — physician confirmed the pipeline's original evidence-based read was correct.** All three
+  revert to `confidence_tier=definite`, `bvf_stage=2` (unchanged from what the deterministic engine already
+  computed — no override needed once confirmed; the `pending_physician_reconfirmation` flag is simply removed for
+  these three in `config/label_overrides.yaml`).
+- **081 — physician confirmed their OWN original read was correct, not the pipeline's.** This is a genuine
+  **pipeline over-call**, not a disagreement that resolved in the pipeline's favor. Applied as a
+  `physician_confirmed_overrides` entry: `bvf_stage` 2→0, `confidence_tier` → `possible` (VARC-3 possible tier,
+  per the physician's own HVD_stage=2/SVD_present=Y determination — which independently matches what the pipeline
+  itself computed from the same gradient/AR evidence; only the BVF/confirmed-reintervention call was wrong).
+  **Root cause, documented as a known extractor gap (not fixed in this pass):** `extract_implicit_new_tavr`
+  asserts a *definite*-tier confirmed reintervention from a bare "s/p TAVR"/"underwent TAVR" mention for any
+  patient with a positively-known SAVR index approach, with **no requirement for a corroborating
+  structural/hemodynamic finding** (gradient rise, new/worsened AR, morphological change) near the mention. 081's
+  note is a genuine, temporally plausible post-SAVR TAVR procedure (not a restated index event, not an
+  unrelated-visit history entry like 077) — the specific gap is the missing corroborating-indication check, not a
+  false narrative match. A general fix was not attempted this close to submission, deliberately, given this
+  project's own prior experience of a plausible-looking general heuristic (the "unrelated visit reason" filter
+  attempted for 077) breaking a confirmed true positive (Patient_036) on corpus-wide testing — see finding above.
+  The scoped fix specification is recorded in `config/label_overrides.yaml`'s `known_extractor_gap` field for a
+  future pass: require `extract_implicit_new_tavr` hits to co-occur with a stenosis/regurgitation/gradient finding
+  before assigning definite-tier confidence; downgrade to `possible` otherwise.
+
+**Final confirmed reintervention count: 8/117** (`bvf_stage==2`, all `confidence_tier=definite`, zero patients
+flagged `pending_physician_reconfirmation`): Patient_017, 035, 036, 038, 044, 058, 061, 068. No sensitivity-vs-
+primary distinction remains necessary — both definitions now coincide at 8 events, since every reintervention
+disagreement is fully reconciled. Head A was re-run on this final, physician-confirmed cohort (see
+`reports/head_a_validation_report.md`).

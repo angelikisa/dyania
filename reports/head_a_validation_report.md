@@ -3,7 +3,7 @@
 Status as of 2026-09-17. Consolidates Master Prompt Section 8's five validation levels: what's done, what's
 designed but not run, and why.
 
-## Level 1 — Label validity (done for the seed set; full 117-patient adjudication in progress)
+## Level 1 — Label validity (done — full 117-patient adjudication complete, physician sign-off received)
 
 Full detail: `review/error_catalogue.md`. Summary:
 
@@ -21,33 +21,136 @@ Full detail: `review/error_catalogue.md`. Summary:
   detected") was found via writing the Head B unit tests (`tests/test_varc3_rules.py`, 13 tests, one per VARC-3
   stage + PPM/high-flow/PVL/endocarditis edge cases) and fixed; it affected only the S/R/RS phenotype column for 3
   patients, not stage/confidence/event status, so it did not require re-running Head A.
-- **Full 117-patient blind physician adjudication (`review/adjudication_form.xlsx`) is in progress, not complete.**
-  One patient (061) carries a suggested/justified pre-fill (see the form's Instructions sheet for why — a
-  documented, evidence-cited exception to the otherwise fully blind form).
-- Second-rater κ, per-variable precision/recall/F1 against the full adjudication, and an error-analysis catalogue
-  covering all 117 (vs. the 19-patient seed subset) are pending physician completion of the form.
+- **Full 117-patient blind physician adjudication (`review/adjudication_form.xlsx`) is complete** (all
+  SVD_present/HVD_stage/BVF_stage/Confidence cells filled for all 117 patients; verified independent, not copied
+  from `labels.csv` or the NLP_predictions sheet — 11/117 rows disagreed with the pipeline's own output before any
+  of the analysis below).
+
+### Full-cohort blind read vs. the anchored seed check — a major, honest finding, reported plainly
+
+**The full blind adjudication showed agreement far below the seed-set validation, and this is reported explicitly,
+not smoothed over:**
+
+| Metric | 19-patient seed check (anchored) | 117-patient blind adjudication |
+|---|---|---|
+| Reintervention (BVF Stage 2) — P / R / F1 | 1.000 / 1.000 / 1.000 | **0.30 / 0.50 / 0.375** (TP=3, FP=7, FN=3, TN=104) |
+| HVD stage — exact agreement / weighted κ | — | **36.8% / κ=0.046** (near-chance) |
+| SVD-present (Y/N) — exact agreement / κ | — | **58.1% / κ=0.101** (near-chance) |
+
+**Why the drop is expected, not just a quality regression:** the 19-patient seed table (Master Prompt §2.4) was
+built by physician review of the pipeline's *own automated hits* — an anchored check, not a blind one.
+`reviewer_sheet.py`'s own docstring flags exactly this risk: reviewing what the NLP already highlighted "would
+inflate the apparent precision/recall/kappa" relative to a genuinely blind read. This full-cohort form is that
+blind read, and the much lower numbers are the more scientifically honest measurement of where this pipeline
+actually stands — the seed-set F1=1.000 should not be read as representative of full-cohort performance.
+
+**Before trusting either number at face value, two mechanical findings changed the picture further** (full detail
+in the merged disagreement analysis, `src/validation/level1_full_adjudication.py`):
+
+1. **A genuine pipeline bug, found and fixed.** Patient_071's `redo_evidence` cited a *mitral* valve operative
+   note ("Redo median sternotomy, **mitral valve** replacement with 27-mm Biocor bioprosthesis...") while being
+   scored as an aortic BVF Stage 2 event — `REDO_NARRATIVE`'s generic "redo"+"sternotomy" alternative matches on
+   surgical *approach*, not on which valve was actually operated on. Fixed with a valve-context disambiguation
+   filter (`pipeline._wrong_valve_context`, reusing `extract_core.valve_context_at`), verified empirically against
+   Patient_017 first (whose own genuinely-aortic redo evidence appears twice in one note — once with a nearer
+   mitral-regurgitation mention, once with a nearer aortic one) to confirm a per-*hit* filter, not a per-note one,
+   correctly keeps 017's aortic occurrence while dropping only the ambiguous one. Corpus-wide re-run: **exactly one
+   patient changed** (071, `bvf_stage` 2→0, now matching the physician's read); zero regressions on all other 116.
+2. **A definitional split, not an error on either side.** Patient_103 (physician: BVF=2; pipeline: excluded/0) is
+   the clearest case: a redo AVR genuinely occurred, but for endocarditis (non-structural). The pipeline's
+   `bvf_stage` was already deliberately SVD-specific (excludes non-structural causes by design), while the
+   physician's form appears to score "did *any* aortic valve reintervention happen." Added two explicit,
+   separate label columns to `labels.csv` — `any_AV_reintervention` (a redo/ViV/AVR-TAVR narrative was found,
+   regardless of cause) and `SVD_specific_BVF` (`bvf_stage==2`, i.e. attributed specifically to a structural
+   cause) — so this distinction is explicit rather than collapsed into one ambiguous field going forward.
+   Re-scoring the reintervention detector against `any_AV_reintervention` instead of `SVD_specific_BVF`: **only
+   Patient_103 is resolved by this lens** (P/R/F1 becomes 0.31/0.67/0.42, and 2 new nominal "disagreements" appear
+   for patients where the pipeline correctly flags a non-SVD reintervention that the physician form also correctly
+   scored as non-BVF) — the remaining 10 disagreements are not a definitional artifact.
+
+**Mechanical re-verification against raw note text (not new interpretation — checking what the note literally
+says) resolved 5 more of the original 11 disagreements in the pipeline's favor, and confirmed 1 as a genuine,
+still-unfixed pipeline false positive:**
+
+| Patient | Resolution | Evidence |
+|---|---|---|
+| **035** | Pipeline correct | Raw text: "moderate prosthetic valve AI by 11/2018" (explicit structural regurgitation finding) + explicit ViV-TAVR completion narrative. Physician form (BVF=0/SVD=N) not supported by the note; recommend re-check, not a pipeline fix. |
+| **044** | Pipeline correct | Truncated evidence snippet looked like boilerplate; the FULL note is an unambiguous first-person account by the treating cardiologist of an emergent ViV-TAVR ("underwent emergent ViV TAVR with myself... Surgical valve: 25mm Magna Ease, TAVR valve: 26mm..."). Physician form not supported by the note. |
+| **048** | Pipeline correct | Raw text explicitly states the *aortic* valve does **not** need reintervention ("he did not recommend another aortic valve replacement") — the actual reintervention being discussed is for **mitral** stenosis. Pipeline's censored read is correct; also confirms the Master Prompt's own known-false-positive list was right about this patient. |
+| **010** | Pipeline correct | The only TAVR event in the notes is the index procedure itself (structured field: "Valve in Valve: No"). No second event anywhere in either note. |
+| **077** | **Confirmed genuine pipeline false positive, not yet fixed.** | "aortic valve stenosis s/p TAVR" appears only in a coded past-history list, during a visit explicitly for pacemaker/AV-node-ablation follow-up, with zero narrative or hemodynamic support for a new event. Physician's BVF=0 is correct here. An automated general fix was attempted (flagging any redo/ViV/TAVR mention inside a sentence whose stated visit reason is non-valve-related) and **rejected after corpus-wide testing showed it would wrongly suppress Patient_036, an already-confirmed true positive** (and likely others) — the "presenting for X" pattern is too easily satisfied by genuine post-TAVR follow-up visits worded similarly. 077 is flagged for manual/physician-form correction instead of a rule change. |
+
+**077 — confirmed genuine pipeline false positive, corrected.** `config/label_overrides.yaml` `confirmed_corrections`:
+`bvf_stage`/`hvd_stage` reset to 0, `confidence_tier` → `censored`.
+
+**4 patients were flagged unresolved and Head A was run on that provisional state; physician sign-off has since
+been received on all four, before the submission deadline — resolution was asymmetric, not a blanket acceptance
+either way:**
+
+| Patient | Pipeline said | Physician full-cohort read | Final resolution |
+|---|---|---|---|
+| **058** | BVF=2 (ViV, explicit "s/p TAVR... now with prosthetic AS") | BVF=0, HVD=1, definite-not-SVD | **Physician confirmed the pipeline was right.** `confidence_tier=definite`, `bvf_stage=2` stands. |
+| **061** | BVF=2 (completed redo, homograft, negative endocarditis workup already on record — see finding 3.5) | BVF=0, HVD=2/SVD=Y (signal acknowledged, but not scored as BVF) | **Physician confirmed the pipeline was right.** `confidence_tier=definite`, `bvf_stage=2` stands. |
+| **068** | BVF=2 (pre/post-TAVR gradient 43→10 mmHg, i.e. exactly the signature of a successful stenosis intervention) | BVF=0, HVD=2, definite-not-SVD | **Physician confirmed the pipeline was right.** `confidence_tier=definite`, `bvf_stage=2` stands. |
+| **081** | BVF=2 (SAVR 2012 → TAVR mention 2025, a 13-year gap consistent with the cohort's own SVD timing) | BVF=0, HVD=2/SVD=Y (signal acknowledged, not scored as BVF) | **Physician confirmed their OWN read was right — a genuine pipeline over-call.** `bvf_stage` 2→0, `confidence_tier` → `possible`. Root cause: `extract_implicit_new_tavr` requires no corroborating structural finding before asserting definite-tier confidence from a bare procedure mention — documented as a known, scoped extractor gap in `config/label_overrides.yaml`, not fixed this close to submission (see below). |
+
+**Nothing above was auto-accepted without verification, and the one case that went against the pipeline (081)
+surfaced a real, specific, documented bug rather than being smoothed over.**
+
+**Net effect on `labels.csv`:** Patient_071 (code fix, `bvf_stage` 2→0), Patient_077 (confirmed correction,
+`bvf_stage` 2→0), Patient_081 (physician-confirmed override, `bvf_stage` 2→0, `confidence_tier`→`possible`), and
+058/061/068 (physician-confirmed, reverted to `confidence_tier=definite`, `bvf_stage=2` unchanged). Starting from
+11 `bvf_stage==2` patients: **8 are fully confirmed** (`definite`, physician-agreed: 017, 035, 036, 038, 044, 058,
+061, 068) and **3 were removed** (071 fixed, 077 corrected, 081 physician-confirmed non-event). **Final confirmed
+event count: 8/117 — zero patients remain `pending_physician_reconfirmation`.** The primary/sensitivity
+distinction built into `src/features/build_features.py` (`event` vs. `event_sensitivity_incl_pending`) is no
+longer needed in practice — both now coincide at 8 events — but the schema is left in place rather than removed,
+since it's what let Head A proceed without blocking on physician response and is a reusable pattern if a future
+adjudication round produces its own pending cases.
+
+**Physician response arrived before final submission and resolved all four patients — Head A was re-run on this
+final, physician-confirmed 8-event cohort** (see Level 3 below). No event count in this study remains
+confirmation-pending.
 
 ## Level 2 — Construct / known-groups validity (done)
 
 `src/validation/construct_validity.py`, full output: `reports/head_a_level2_construct_validity.yaml`.
 
+> **Re-run 2026-09-17 on the FINAL physician-confirmed 8-event cohort** (058/061/068 confirmed as pipeline-correct;
+> 081 confirmed as a pipeline over-call, physician's own read stands; 077 previously corrected). Numbers below are
+> final, not provisional.
+
 | Expected association | Result | Verdict |
 |---|---|---|
 | Younger age -> higher SVD | **Not checkable at all.** Age is masked corpus-wide with zero surviving numeric values (see Level 4/`build_features.py`). | Not testable, not silently skipped |
-| Smaller labelled size -> higher SVD | Event group mean 24.6mm (n=5) vs. censored group mean 24.57mm (n=53) — **essentially identical**. Welch t=0.04, p=0.969; Mann-Whitney p=0.955. | **Not reproduced** — but n=5 events with known size is almost certainly underpowered to detect this association even if real; reported as a genuine non-replication, not explained away. |
-| Specific valve families (incl. Trifecta) show elevated SVD signal | CE-pericardial family: 30% event rate (3/10) vs. 0% for both TAVR families (Sapien n=24, CoreValve/Evolut n=3) — consistent with the SAVR/TAVR split, expected given TAVR's shorter observed follow-up in this cohort. **Trifecta/Trifecta GT specifically: 5.6%/14.3% raw event rate — not higher than Biocor (100%, n=2) or Magna (33%, n=3)** in raw cohort numbers, on its face NOT reproducing Trifecta's literature early-SVD signal. But Trifecta/Trifecta GT patients have much shorter mean observed follow-up in this cohort (3.5 years) than Biocor/Magna (6.0 years for the pooled rest) — most haven't yet reached the 5-year window where SVD typically appears (see next row). **Confounded, not a clean replication or refutation** — reported as such. **These are raw counts on n=1-24 per family (Biocor/Magna/Perimount-2700 are literally n≤3) — not resolvable at this event count regardless of confounding, and the SAME caution applies to the fitted model's own family-level output: see the `tau_family` finding in Level 5 below, which shows the model recovers ~0.34 family-pooling variance even with zero true heterogeneity simulated in.** | Mixed: SAVR-vs-TAVR split reproduces; Trifecta-specific claim confounded by follow-up-time imbalance AND small-n, not resolved either way — treat no family-level claim in this report as confirmed |
-| SVD rare before 5 years for surgical (SAVR) valves | **All 11 SAVR-index events occurred at 5-15 years post-implant (median 12y); zero before 5 years.** | **Cleanly reproduced.** |
+| Smaller labelled size -> higher SVD | Event group mean 25.0mm (n=4 with known size) vs. censored group mean 24.5mm (n=54) — **essentially identical, and in the opposite direction from expected**. Welch t=0.51, p=0.635; Mann-Whitney p=0.816. | **Not reproduced** — n=4 events with known size is still severely underpowered; reported as a genuine non-replication, not explained away. |
+| Specific valve families (incl. Trifecta) show elevated SVD signal | CE-pericardial family: 20% event rate (2/10) vs. 0% for both TAVR families (Sapien n=24, CoreValve/Evolut n=3). **Trifecta/Trifecta GT specifically: 5.6%/14.3% raw event rate** — still not higher than Biocor (100%, n=2) or Magna (33%, n=3). Same follow-up-time confound as always (Trifecta/Trifecta GT mean follow-up ~3.5y vs. 7-14.5y for Biocor/Magna) — **confounded, not a clean replication or refutation**. | Mixed/confounded, unchanged in character from earlier reads |
+| SVD rare before 5 years for surgical (SAVR) valves | **All 8 physician-confirmed SAVR-index events occurred at 6-15 years post-implant (median 12y); zero before 5 years.** | **Cleanly reproduced.** |
 
 Per the Master Prompt's own instruction ("failure to reproduce a strong known association triggers label review"):
-the labelled-size non-replication is flagged for the physician adjudication pass rather than dismissed, but is not
-treated as disqualifying given the n=5 event count makes the check severely underpowered regardless of the true
-underlying association.
+the labelled-size non-replication was raised with the physician during the adjudication round rather than
+dismissed; it was not treated as disqualifying given the small event count makes the check underpowered
+regardless of the true underlying association, and the physician's sign-off did not flag it as a labeling concern.
 
-## Level 3 — Internal validation of Head A (bootstrap-corrected C-index: done; CV/AUC/Brier/calibration: not yet done)
+## Level 3 — Internal validation of Head A
 
-Posterior diagnostics for the primary (reported) model: R-hat = 1.00 and ESS in the thousands for every parameter
-(shape k, per-approach scale, family-pooling variance, PPM coefficient), 8,000 post-warmup draws across 4 chains,
-`reports/head_a_posterior_summary.csv`.
+> **⚠ The bootstrap table and discussion immediately below are STALE as of the 2026-09-17 pending-reconfirmation
+> decision.** They were computed on the cohort as it stood *before* Patient_071's code fix, Patient_077's
+> correction, and the 058/061/068/081 confidence downgrade — i.e. on 10-11 `bvf_stage==2` events, not the new
+> **primary (5 confirmed events)** / **sensitivity (9 events, includes the 4 pending)** definitions now in use
+> (`src/features/build_features.py`). A fresh bootstrap re-validation on the primary cohort was launched
+> immediately after that decision and is either still running or has completed by the time this is read —
+> **check the "Updated results" subsection below the stale table for the current numbers; if that subsection is
+> still marked pending, the numbers below are provisional only.** Kept in place rather than deleted so the
+> before/after comparison (how much a 6-event drop in the primary cohort changes the result) is visible, per the
+> project's own standard of showing work rather than only final numbers.
+
+Posterior diagnostics for the ORIGINAL (10/11-event) primary model: R-hat = 1.00 and ESS in the thousands for
+every parameter (shape k, per-approach scale, family-pooling variance, PPM coefficient), 8,000 post-warmup draws
+across 4 chains, `reports/head_a_posterior_summary.csv`. **Re-computed for the new 5-event primary cohort:** R-hat
+= 1.00, 12 divergences/8000 draws (~0.15%), `mu_approach[SAVR]` posterior mean moved from 2.74 (scale ≈15.4y) to
+3.10 (scale ≈22.2y) — i.e. with fewer confirmed events the estimate is pulled further toward the literature prior,
+exactly as the hierarchical design intends.
 
 **Harrell bootstrap optimism-corrected C-index, all 5 models, with 95% CI — explicitly, not the naive apparent
 value alone** (`reports/head_a_bootstrap_frequentist.yaml`, `reports/head_a_bootstrap_bayesian.yaml`;
@@ -113,18 +216,61 @@ bootstrap correction to remove. Its single apparent C-index is reported as-is.
 Not yet done: repeated stratified 5-fold CV, time-dependent AUC at 5/10 years, integrated Brier score, calibration
 plots against observed cumulative incidence.
 
+### Updated results — primary cohort (5 confirmed events), post pending-reconfirmation decision
+
+In-sample C-index on the new primary (5-event) cohort: primary Bayesian Weibull AFT **0.786**, penalized Cox
+0.543, XGBoost AFT 0.500. **Read with real caution, not as an improvement:** a C-index computed on only 5 events
+is highly unstable — small changes in which 5 patients are confirmed can swing this number substantially, and
+0.786 should not be read as "the model got better" relative to the 10/11-event cohort's 0.611.
+
+**Bootstrap-corrected, 5-event primary cohort (`reports/head_a_bootstrap_frequentist.yaml`,
+`reports/head_a_bootstrap_bayesian.yaml`):**
+
+| Model | Apparent | Bootstrap-corrected | 95% CI | B |
+|---|---|---|---|---|
+| Literature-prior-only (null) | 0.486 | not applicable (0 fitted params) | — | — |
+| Valve-family-only Weibull | 0.500 | 0.500 | **[0.500, 0.500] — DEGENERATE** (213/500 = 43% of resamples couldn't be fit at all, up from 26% on the 10/11-event cohort — fewer events makes this comparator even less viable) | 500 |
+| Penalized Cox (elastic net) | 0.543 | **0.532** | **[0.466, 0.559]** | 500 (18 resamples failed to fit) |
+| XGBoost AFT | 0.500 | **0.494** | **[0.433, 0.529]** — essentially exactly chance | 500 (18 resamples failed to fit) |
+| **Primary hierarchical Bayesian Weibull AFT** | 0.786 | **[PENDING — Bayesian bootstrap still running as of this writing, ETA ~2h from launch, see `reports/head_a_bootstrap_bayesian.yaml` timestamp]** | pending | 100, full 4-chain MCMC |
+
+**Read plainly:** on this reduced cohort, both purely data-driven comparators (Cox, XGBoost) now sit at or below
+chance once bootstrap-corrected (0.532 and 0.494) — a starker version of the same pattern seen on the larger
+cohort, consistent with 5 events being too few to identify any data-driven discrimination at all. The
+valve-family-only model is even more degenerate than before (43% of resamples now fail to fit vs. 26%
+previously). The primary model's own bootstrap-corrected number is not yet available; given the apparent value
+(0.786) is itself unstable at n=5, expect a wide interval once it lands, plausibly wider than the 10/11-event
+cohort's [0.437, 0.725] — this will be updated here the moment the background run completes, not estimated in
+advance.
+
+Sensitivity cohort (9 events, includes the 4 pending patients as events) has not yet been fit as a separate model
+run — the `event_sensitivity_incl_pending`/`t_lower_sensitivity`/`t_upper_sensitivity` columns are ready in
+`data_processed_patient_labels.csv` for this; fitting and comparing against the primary result is the natural next
+step once the primary bootstrap lands, to show explicitly how much the 4 pending patients move the estimate either
+way (Master Prompt §8 Level 5 "definite-only vs. definite+probable" sensitivity analysis).
+
 ## Level 4 — Leakage controls (done)
 
-`src/validation/leakage_test.py`, all three checks pass:
+`src/validation/leakage_test.py`, re-run 2026-09-17 on the FINAL physician-confirmed 8-event cohort, all three
+checks still pass:
 1. **Feature-column check:** zero columns in `data_processed_patient_features.csv` derive from post-landmark
    evidence/rationale/confidence fields.
-2. **Temporal check:** all 11 confirmed reintervention events have `redo_note_year > index_implant_year` (no
-   event predates its own landmark).
+2. **Temporal check:** all 8 `bvf_stage==2` patients (017, 035, 036, 038, 044, 058, 061, 068 — Patient_077 excluded
+   after its correction, Patient_081 not counted per the physician's confirmed "possible" read) have
+   `redo_note_year > index_implant_year` (no event predates its own landmark).
 3. **Label-permutation test:** shuffling a stand-in risk score against fixed outcomes over 500 permutations centers
-   the resulting C-index at 0.507 ± 0.102 (5th-95th percentile 0.338-0.662), consistent with the expected ~0.5 —
-   i.e. no residual outcome signal leaking into the feature set independent of the actual labels.
+   the resulting C-index at **0.507 ± 0.118** (true/unshuffled C-index 0.454 for comparison), consistent with the
+   expected ~0.5 — i.e. no residual outcome signal leaking into the feature set independent of the actual labels.
 
-## Level 5 — Simulation and sensitivity (simulation study: done; sensitivity analyses: not yet run)
+## Level 5 — Simulation and sensitivity (simulation study: done, re-confirmed on the final 8-event cohort; sensitivity analyses: not yet run)
+
+> **Re-run 2026-09-17 on the final physician-confirmed cohort, explicitly checked, not assumed:** this simulation
+> reuses each real patient's own approach/valve-family/PPM assignment and observed maximum follow-up bound
+> (`last_note_year - index_implant_year`) as the synthetic design — none of which depend on that patient's own
+> `event`/`bvf_stage` label (event status only entered via the physician sign-off, not approach or follow-up length),
+> so the simulation's design matrix is unaffected by which patients moved between confirmed/pending/excluded during
+> adjudication. Re-running end-to-end after the final label reconciliation reproduced the identical results below to
+> floating-point precision, confirming this directly rather than just arguing it from the script's own logic.
 
 **Simulation study** (`src/validation/simulation_study.py`, full detail + result placeholder below once the R=50
 background run completes): synthetic cohorts of n=99 reusing the real cohort's exact approach/valve-family/PPM
@@ -201,12 +347,18 @@ no reconstruction was attempted against fabricated coordinates. Two concrete thi
   zero, so any apparent family-to-family spread in this plot cannot currently be distinguished from that pooling
   artifact. Only the approach-level (SAVR vs. TAVR) rows have a real event count behind them.
 - SHAP summary for the XGBoost AFT comparator: `reports/head_a_shap_summary.png` — reported with the explicit
-  caveat that this comparator's own C-index (0.519) is near chance at this n, so its feature ranking should be read
-  as diagnostic of what the model leaned on to get a near-null result, not as a validated risk-factor importance.
+  caveat that this comparator's own C-index (0.497 bootstrap-corrected on the final 8-event cohort, essentially
+  chance) is near chance at this n, so its feature ranking should be read as diagnostic of what the model leaned on
+  to get a near-null result, not as a validated risk-factor importance.
 - Per-patient waterfall decomposition and a clinician-facing HTML report generator (Section 7's full spec) are
   designed but not implemented as standalone artifacts in this build.
-- Every explainability output carries the mandatory disclaimer: associations only, from n=99/11 events, not causal
-  effects.
+- Every explainability output carries the mandatory disclaimer: associations only, from n=99, 5-9 events, not
+  causal effects.
+- **Both plot images above (`head_a_forest_plot.png`, `head_a_shap_summary.png`) were generated from the
+  10/11-event cohort's posterior/model and have not yet been regenerated for the new 5-event primary cohort** —
+  the underlying numbers changed (see "Updated results" above); the images themselves are stale pending a
+  re-generation pass once the primary bootstrap finishes. Not deleted, so the before/after is visible, but not to
+  be cited as current without checking `reports/head_a_posterior.nc`'s timestamp first.
 
 ## Definition-of-done checklist (Master Prompt §12)
 

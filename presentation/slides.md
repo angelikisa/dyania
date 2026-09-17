@@ -18,9 +18,9 @@
 
 - Structural valve deterioration (SVD) is currently caught by fixed-interval echo surveillance, not individualized
   risk — every patient gets the same schedule regardless of their actual trajectory.
-- In our own 117-patient cohort: 11 confirmed reinterventions, all SAVR-index, spanning routine ViV TAVR to one
-  documented emergent case (cardiogenic shock at presentation) — a direct illustration of what late identification
-  costs.
+- In our own 117-patient cohort: **8 physician-confirmed reinterventions**, all SAVR-index, spanning routine ViV
+  TAVR to one documented emergent case (cardiogenic shock at presentation) — a direct illustration of what late
+  identification costs.
 - Published durability ranges from ~92% freedom-from-SVD at 5 years (Mitroflow) to ~96% at 10 years (Freestyle) —
   device choice alone spans a wide durability range surveillance schedules don't currently account for.
 
@@ -39,7 +39,7 @@
 - If durability risk were forecast from routinely collected notes at implant time, surveillance could shift from
   fixed-interval to risk-adaptive — closer follow-up for short-predicted-durability patients, standard intervals for
   the rest.
-- At n=99/11 events, we can't yet validate a deployable risk score — but we can validate the *method*: an
+- At n=99/8 events, we can't yet validate a deployable risk score — but we can validate the *method*: an
   auditable severity-staging engine plus a literature-anchored Bayesian durability model that degrades honestly
   (wide uncertainty) rather than overclaiming at small n.
 
@@ -49,11 +49,12 @@
 
 - Population: bioprosthetic AVR recipients (SAVR/TAVR/ViV) with a recoverable implant year; 117 patients (Head B),
   99 with a usable time origin (Head A).
-- Primary endpoint: BVF Stage ≥2 (reintervention), VARC-3-staged. Secondary: moderate-or-greater HVD (18/117
-  patients, vs. 11 for the primary — matches the Master Prompt's own expected ~15-19 vs. 8 ratio).
-- Ground truth: 5-tier hierarchy (definite/probable/possible/excluded/censored), validated against a
-  physician-reviewed seed set before any modeling — reintervention-detector **F1 = 1.000** after fixing 4
-  root-caused pipeline bugs (from 0.933 pre-fix).
+- Primary endpoint: BVF Stage ≥2 (reintervention), VARC-3-staged — **8 physician-confirmed events**, final
+  (`review/error_catalogue.md` §8). Secondary: moderate-or-greater HVD (22/117 patients, `probable`-tier).
+- Ground truth: 5-tier hierarchy (definite/probable/possible/excluded/censored), validated in two passes — a
+  19-patient seed set (reintervention-detector **F1 = 1.000** after fixing 4 root-caused pipeline bugs, from
+  0.933 pre-fix), then a full 117-patient blind adjudication with physician sign-off received on all 11
+  disagreements it surfaced.
 
 ## Slide 6 — Data Sources
 
@@ -67,11 +68,11 @@
 
 ## Slide 7 — Validation Plan
 
-- No train/test split at 11 events — Bayesian partial pooling + literature-informed priors instead of a
+- No train/test split at 8 events — Bayesian partial pooling + literature-informed priors instead of a
   classical split; leakage controls (feature-timestamp check, temporal ordering check, label-permutation test)
   all pass.
-- Metrics: posterior diagnostics (R-hat = 1.00, ESS in the thousands, clean convergence) + in-sample C-index
-  against 3 comparators.
+- Metrics: posterior diagnostics (R-hat = 1.00, clean convergence) + Harrell bootstrap-corrected C-index (95% CI)
+  against 4 comparators.
 - Comparator baseline: literature-prior-only, valve-family-only frequentist Weibull (undefined for 2/3 families —
   zero events), penalized Cox, XGBoost AFT.
 
@@ -89,31 +90,34 @@
 
 ## Slide 9 — Results
 
-- Bootstrap-corrected C-index (Harrell optimism correction, 95% CI — not a naive point estimate, same full-MCMC
-  fitting procedure for every model): primary Bayesian model **0.591, CI [0.437, 0.725]** vs. penalized Cox 0.546
-  CI [0.481, 0.585], XGBoost AFT 0.508 CI [0.446, 0.537], literature-only 0.481 (below chance, not bootstrapped).
-- Honest read, shown explicitly, not hidden: with 11 events these intervals are wide — the primary model's own
-  lower bound (0.437) is below chance. Its central estimate is the best of the five models, evaluated the same
-  fitting method throughout (B=100 for the primary model vs. B=500 for the others — a compute-time tradeoff, not a
-  method difference), but "beats chance with confidence" cannot be claimed at this n. The literature-only model
-  scoring *below* chance on our own cohort is itself the key finding: it's why a Bayesian update, not literature
-  transfer alone, is the right framing.
+> Final numbers below are from the physician-confirmed 8-event cohort — see `reports/head_a_validation_report.md`
+> Level 3 for the full table and CIs.
+
+- Bootstrap-corrected C-index (Harrell optimism correction, 95% CI — not a naive point estimate): [FINAL NUMBERS —
+  fill in from `reports/head_a_validation_report.md` Level 3 once the B=100 full-MCMC Bayesian bootstrap and B=500
+  frequentist-comparator bootstrap finish running on the final 8-event cohort].
+- Honest read, shown explicitly, not hidden: with only 8 confirmed events, these intervals are wide. The
+  literature-only model scoring at or below chance on our own cohort is itself a key finding: it's why a Bayesian
+  update, not literature transfer alone, is the right framing. A stated compute-time asymmetry (B=100 for the
+  primary Bayesian model vs. B=500 for the frequentist comparators) is flagged directly next to the results table,
+  not buried in a footnote.
 - SHAP/forest-plot outputs available (`reports/head_a_forest_plot.png`, `head_a_shap_summary.png`), reported with
-  an explicit near-chance-comparator caveat.
+  an explicit `tau_family` pooling-artifact caveat (Level 5 simulation study) on any family-level claim.
 
 ---
 
 ## Slide 10 — Impact and Next Steps
 
 - What this enables today: a validated, auditable NLP severity pipeline (F1=1.000 on seed set) that a physician
-  can review and correct in one pass, ready to scale to a larger extract without re-architecting.
-- Full validation in a real health system requires: complete 117-patient physician adjudication (in progress,
-  `review/adjudication_form.xlsx`) and real Guyot KM-curve digitization (algorithm implemented + self-tested, but
-  none of our 3 source papers contain an actual curve to digitize — need the primary studies, see
-  `data/external/km_digitized/DIGITIZATION_CHECKLIST.md`). Bootstrap (Level 3), construct-validity (Level 2), and
-  simulation (Level 5) validation are all done — see `reports/head_a_validation_report.md` — sensitivity analyses
-  are what's still outstanding.
-- 3-month next step: multi-site extract to push past 11 events, structured echo integration to close the
-  valve-model/size gap, and a formal fairness analysis once demographic fields are available.
+  reviewed and signed off on end-to-end, ready to scale to a larger extract without re-architecting.
+- Full validation in a real health system would still require: a second physician rater for inter-rater kappa
+  (only one physician's adjudication is reflected in the current labels), and real Guyot KM-curve digitization
+  (algorithm implemented + self-tested, but none of our 3 source papers contain an actual curve to digitize — need
+  the primary studies, see `data/external/km_digitized/DIGITIZATION_CHECKLIST.md`). All five validation levels
+  (label validity, construct validity, bootstrap, leakage, simulation) are complete on the final 8-event cohort —
+  see `reports/head_a_validation_report.md`.
+- 3-month next step: multi-site extract to push past single-digit confirmed events, structured echo integration to close the
+  valve-model/size gap, a formal fairness analysis once demographic fields are available, and fixing the documented
+  `extract_implicit_new_tavr` corroborating-finding gap (`config/label_overrides.yaml`, Patient_081).
 - Deployment readiness: method-validated, not clinically validated — the honest next milestone is n in the low
   hundreds of confirmed events, not a production rollout.

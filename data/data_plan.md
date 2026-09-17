@@ -95,10 +95,18 @@ censored), implemented in `varc3_rules.py` and validated in two passes:
    before accepting the run, including catching and re-fixing a false positive the fix itself introduced
    (Patient_034) before it reached `labels.csv`.
 
-**Prevalence:** 11/117 (9.4%) confirmed BVF Stage 2 (hard endpoint); 18/117 (15.4%) `probable`-tier HVD signal
-(expanded/secondary endpoint, per Master Prompt §5.3's expectation of ~15-19 events vs. 8 for the primary — matches
-closely). Full physician blind adjudication (`review/adjudication_form.xlsx`, all 117 patients) is in progress, not
-complete — every number above is pipeline-derived and explicitly flagged as pending confirmation.
+**Full 117-patient physician blind adjudication is complete, and sign-off has been received on every disagreement**
+(`review/adjudication_form.xlsx`, sign-off 2026-09-17). It disagreed with the pipeline on 11/117 patients.
+Mechanical re-verification against raw note text, one code fix (valve-context disambiguation, Patient_071), and one
+confirmed correction (Patient_077, a bare coded-history false positive) resolved 7 of the 11 directly. The
+remaining 4 (058, 061, 068, 081) needed a physician judgment call and were held as
+`pending_physician_reconfirmation=True` until sign-off; resolution was **asymmetric, not a blanket acceptance of
+either side** — 058, 061, and 068 confirmed the pipeline's original evidence-based read (no label change), while
+081 confirmed the physician's own read over the pipeline's (a genuine pipeline over-call, documented as a known,
+not-yet-fixed extractor gap in `config/label_overrides.yaml`). **Final prevalence:** 8/117 (6.8%) physician-confirmed
+BVF Stage 2 (hard endpoint, all `confidence_tier=definite`); zero patients remain `pending_physician_reconfirmation`;
+22/117 (18.8%) `probable`-tier HVD signal (expanded/secondary endpoint), unaffected by this round. Full audit trail:
+`review/error_catalogue.md` §8.
 
 ## 5. Synthetic or Proxy Data
 
