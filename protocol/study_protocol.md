@@ -15,7 +15,7 @@ structural valve deterioration severity per VARC-3, with every assignment tracea
 1. Differentiate durability trajectories by implant approach (SAVR vs. TAVR vs. valve-in-valve) and valve family.
 2. Characterize the S/R/RS (stenosis/regurgitation/mixed) phenotype distribution of SVD in this cohort.
 3. Quantify how much a literature-informed Bayesian prior improves discrimination over purely data-driven
-   comparators at a sample size (n=99, 5-9 events) too small to support an unconstrained model.
+   comparators at a sample size (n=99, 8 events) too small to support an unconstrained model.
 4. Establish and validate a reproducible, auditable NLP labeling pipeline as the prerequisite for any of the above —
    in practice, this consumed the majority of the effort in this build, since a durability model is only as good as
    its labels (see `review/error_catalogue.md`).
@@ -113,27 +113,30 @@ No oversampling or SMOTE is used anywhere, per Hard Rule #6 — the primary/expa
 events vs. 99 patients) is handled by the Bayesian model's own likelihood and priors, not by resampling the data.
 
 ### Evaluation Metrics
-> **⚠ Re-validated 2026-09-17 on the current 5-event primary cohort** (after 4 patients — 058, 061, 068, 081 —
-> moved to `pending_physician_reconfirmation`, per `config/label_overrides.yaml`). The primary model's own
-> bootstrap-corrected number is still running as of this writing (~2h estimated) — check
-> `reports/head_a_validation_report.md` Level 3 for whichever is current before citing it.
+> **Final, 2026-09-17, on the physician-confirmed 8-event cohort.** All bootstrap jobs referenced below have
+> completed — see `reports/head_a_validation_report.md` Level 3 for the full table and discussion.
 
 Uno's C-index (approximated here via `lifelines.utils.concordance_index` on a midpoint-time approximation, since
 scikit-survival's IPCW C-index implementation could not be installed in this environment — see `model/approach.md`
 §2), reported **Harrell bootstrap-corrected with 95% CI**, not as a naive in-sample point estimate (Master Prompt
-§8 Level 3): penalized Cox 0.543 apparent → **0.532 corrected, 95% CI [0.466, 0.559]**; XGBoost AFT 0.500 →
-**0.494, CI [0.433, 0.529]** (essentially exact chance); valve-family-only Weibull collapses to a degenerate 0.500
-(now 213/500 = 43% of resamples fail to fit at all, up from 26% on the larger cohort — fewer events makes this
-comparator even less viable); literature-prior-only (null, not bootstrapped — zero fitted parameters) apparent
-C-index is 0.486, essentially chance. **On this reduced cohort, both purely data-driven comparators now sit at or
-below chance once bootstrap-corrected** — a starker version of the pattern seen on the original (10/11-event)
-cohort. The primary model's apparent (in-sample, NOT yet bootstrap-corrected) C-index is 0.786 — read with real
-caution, since a C-index on only 5 events is highly unstable and this number will very likely move once the
-bootstrap correction lands. Posterior diagnostics (R-hat, ESS) for the primary model's one reported full-MCMC fit
-on the 5-event cohort converged cleanly (R-hat = 1.00, 12 divergences/8000 draws ≈0.15%); the B=100 bootstrap
-resamples' own diagnostics from the prior (10/11-event) run were somewhat noisier than that single fit (mean max
-R-hat 1.022, ~1.1% divergence rate), as expected for 100 unattended refits vs. one carefully monitored fit. Time-dependent AUC, integrated Brier score, and calibration
-plots are designed but not yet computed.
+§8 Level 3): penalized Cox 0.546 apparent → **0.536 corrected, 95% CI [0.467, 0.573]**; XGBoost AFT 0.507 →
+**0.497, CI [0.436, 0.513]** (essentially exact chance); valve-family-only Weibull collapses to a degenerate 0.500
+(213/500 = 43% of resamples fail to fit at all — zero events in some resampled family); literature-prior-only
+(null, not bootstrapped — zero fitted parameters) apparent C-index is 0.493, essentially chance. **Primary
+hierarchical Bayesian Weibull AFT: 0.618 apparent → 0.554 bootstrap-corrected, 95% CI [0.353, 0.771]** (B=100 full
+4-chain MCMC per resample — the other three comparators used B=500; a stated ~10x compute-time tradeoff, not a
+method difference, documented next to this result rather than in a footnote). **Plainly:** in about 55 of 100
+random pairwise patient comparisons, the model correctly ranked who failed first — barely above chance on its
+central estimate, with a 95% interval spanning worse-than-chance to fairly strong; "the model discriminates"
+cannot be claimed with confidence at n=8, though its point estimate remains the best of the five models reported.
+Posterior diagnostics for the primary model's one reported full-MCMC fit converged cleanly (R-hat = 1.00, 7
+divergences/8000 draws ≈0.09%); the B=100 bootstrap resamples' own diagnostics were somewhat noisier than that
+single fit (mean max R-hat 1.022, ~1.16% divergence rate), as expected for 100 unattended refits vs. one carefully
+monitored fit. A case-level check tells the same story concretely: of the 8 confirmed-event patients, only 3 had
+their actual event fall inside the model's own 80% credible interval for predicted median survival time — n=8 is
+indicative only, not statistically robust, but is consistent with the Level 5 simulation study's own
+under-coverage finding (48-56% observed vs. 80% nominal). Time-dependent AUC, integrated Brier score, and
+calibration plots are designed but not yet computed.
 
 ### Subgroup Analyses
 By implant approach (SAVR/TAVR/ViV-TAVR) and, where recoverable, valve family — both are structural components of
@@ -147,7 +150,7 @@ possible (age unrecoverable, see `model/approach.md` §3).
 ### Comparator / Baseline
 Four comparators, all reported alongside the primary model rather than in isolation (§5.4 requirement):
 literature-prior-only (null), valve-family-only frequentist Weibull, penalized Cox (elastic net), XGBoost AFT. The
-primary model's bootstrap-corrected C-index edge over all three data-driven comparators (0.591 vs. 0.546/0.508/
+primary model's bootstrap-corrected C-index edge over all three data-driven comparators (0.554 vs. 0.536/0.497/
 0.500 corrected — see Evaluation Metrics above for full CIs and the noted B=100-vs-B=500 resample-count difference,
 and the family-only model is literally undefined for 2 of 3 observed families due to zero events) is presented as
 evidence that literature-informed partial pooling is doing real work at this sample size — not as proof of

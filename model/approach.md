@@ -156,22 +156,22 @@ notes-only extract (n=99 patients/8 events) rather than an independently validat
 
 ## 8. Limitations and Failure Modes
 
-- **n=99/5 confirmed events (9 in sensitivity) (Head A).** Every model here — including the primary one — should be
-  read as demonstrating a *method*, not a validated clinical tool. **Bootstrap-corrected C-index with 95% CI, not
-  the naive in-sample value** (Harrell optimism correction; live table in `reports/head_a_validation_report.md`
-  Level 3, re-validated 2026-09-17 on the current 5-event primary cohort after 4 patients moved to
-  `pending_physician_reconfirmation`): penalized Cox 0.543 apparent → **0.532 corrected, CI [0.466, 0.559]**;
-  XGBoost AFT 0.500 → **0.494, CI [0.433, 0.529]** (essentially exact chance); valve-family-only Weibull even more
-  degenerate than before (**[0.500, 0.500]**, 213/500 = 43% of resamples now fail to fit at all, up from 26% on
-  the larger cohort); literature-prior-only (null, not bootstrapped) apparent 0.486. **The primary model's own
-  bootstrap-corrected number is still running as of this writing** (full 4-chain MCMC per resample, same
-  procedure as its own apparent fit — B=100 vs. the others' B=500, a stated compute-time tradeoff, not a method
-  difference, ~2h estimated wall-clock) — its apparent (in-sample, not yet corrected) value is 0.786, but this
-  should be read with real caution: a C-index on only 5 events is highly unstable, and this is not yet the
-  corrected number. Check `reports/head_a_validation_report.md` for whichever is current. On this reduced cohort
-  both data-driven comparators now sit at or below chance once corrected — a starker version of the same pattern
-  seen on the original cohort, and further evidence for the Bayesian-update framing over either a literature-only
-  or a purely data-driven fit at this n.
+- **n=99/8 confirmed events (Head A), final.** Every model here — including the primary one — should be read as
+  demonstrating a *method*, not a validated clinical tool. **Bootstrap-corrected C-index with 95% CI, not the
+  naive in-sample value** (Harrell optimism correction; full table in `reports/head_a_validation_report.md`
+  Level 3, final 2026-09-17 on the physician-confirmed 8-event cohort): penalized Cox 0.546 apparent →
+  **0.536 corrected, CI [0.467, 0.573]**; XGBoost AFT 0.507 → **0.497, CI [0.436, 0.513]** (essentially exact
+  chance); valve-family-only Weibull degenerate (**[0.500, 0.500]**, 213/500 = 43% of resamples fail to fit at
+  all); literature-prior-only (null, not bootstrapped) apparent 0.493. **Primary hierarchical Bayesian Weibull
+  AFT: 0.618 apparent → 0.554 corrected, 95% CI [0.353, 0.771]** (B=100 full 4-chain MCMC per resample, same
+  fitting procedure as its own apparent fit and as the other four comparators — B=100 vs. the others' B=500 is a
+  stated compute-time tradeoff, not a method difference). In plain terms: in roughly 55 of 100 random pairwise
+  patient comparisons, the model correctly ranked who failed first — barely above chance on its central estimate,
+  with a 95% interval spanning worse-than-chance to fairly strong. Its point estimate remains the highest of the
+  five models, but "beats chance with confidence" cannot be claimed at this n. A case-level check tells the same
+  story concretely: of the 8 confirmed-event patients, only 3 had their actual event fall inside the model's own
+  80% credible interval for predicted median survival time — consistent with the Level 5 simulation study's own
+  under-coverage finding (interval coverage 48-56% vs. the nominal 80%), not a new surprise.
 - **All 8 confirmed events are SAVR-index.** TAVR-index reinterventions are essentially unobserved in this
   notes-only extract; the TAVR-arm posterior is almost entirely prior-driven. This may reflect this being a younger
   technology with less mature follow-up in our corpus specifically, not a true absence of TAVR SVD risk.

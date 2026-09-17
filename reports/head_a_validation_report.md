@@ -132,25 +132,11 @@ the labelled-size non-replication was raised with the physician during the adjud
 dismissed; it was not treated as disqualifying given the small event count makes the check underpowered
 regardless of the true underlying association, and the physician's sign-off did not flag it as a labeling concern.
 
-## Level 3 — Internal validation of Head A
+## Level 3 — Internal validation of Head A (final — 2026-09-17, physician-confirmed 8-event cohort)
 
-> **⚠ The bootstrap table and discussion immediately below are STALE as of the 2026-09-17 pending-reconfirmation
-> decision.** They were computed on the cohort as it stood *before* Patient_071's code fix, Patient_077's
-> correction, and the 058/061/068/081 confidence downgrade — i.e. on 10-11 `bvf_stage==2` events, not the new
-> **primary (5 confirmed events)** / **sensitivity (9 events, includes the 4 pending)** definitions now in use
-> (`src/features/build_features.py`). A fresh bootstrap re-validation on the primary cohort was launched
-> immediately after that decision and is either still running or has completed by the time this is read —
-> **check the "Updated results" subsection below the stale table for the current numbers; if that subsection is
-> still marked pending, the numbers below are provisional only.** Kept in place rather than deleted so the
-> before/after comparison (how much a 6-event drop in the primary cohort changes the result) is visible, per the
-> project's own standard of showing work rather than only final numbers.
-
-Posterior diagnostics for the ORIGINAL (10/11-event) primary model: R-hat = 1.00 and ESS in the thousands for
-every parameter (shape k, per-approach scale, family-pooling variance, PPM coefficient), 8,000 post-warmup draws
-across 4 chains, `reports/head_a_posterior_summary.csv`. **Re-computed for the new 5-event primary cohort:** R-hat
-= 1.00, 12 divergences/8000 draws (~0.15%), `mu_approach[SAVR]` posterior mean moved from 2.74 (scale ≈15.4y) to
-3.10 (scale ≈22.2y) — i.e. with fewer confirmed events the estimate is pulled further toward the literature prior,
-exactly as the hierarchical design intends.
+Posterior diagnostics for the final primary model fit: R-hat = 1.00, 7 divergences/8,000 post-warmup draws
+(~0.09%) across 4 chains, `reports/head_a_posterior_summary.csv`. `mu_approach[SAVR]` posterior mean = 2.858
+(scale ≈17.4y).
 
 **Harrell bootstrap optimism-corrected C-index, all 5 models, with 95% CI — explicitly, not the naive apparent
 value alone** (`reports/head_a_bootstrap_frequentist.yaml`, `reports/head_a_bootstrap_bayesian.yaml`;
@@ -159,95 +145,67 @@ methodology and resample-count justification in `src/validation/bootstrap_valida
 
 | Model | Apparent (in-sample) C-index | Bootstrap-corrected | 95% CI | B (resamples) |
 |---|---|---|---|---|
-| Literature-prior-only (null) | 0.481 | not applicable (see note) | — | — |
-| Valve-family-only Weibull | 0.500 | 0.500 | **[0.500, 0.500] — DEGENERATE, not a real interval, see note below** | 500 (131/500 = 26% of resamples couldn't even be fit) |
-| Penalized Cox (elastic net) | 0.556 | **0.546** | **[0.481, 0.585]** | 500 |
-| XGBoost AFT | 0.519 | **0.508** | **[0.446, 0.537]** | 500 |
-| **Primary hierarchical Bayesian Weibull AFT** | 0.611 | **0.591** | **[0.437, 0.725]** | 100, full 4-chain MCMC (same fitting procedure as the other rows — see note below) |
+| Literature-prior-only (null) | 0.493 | not applicable (see note) | — | — |
+| Valve-family-only Weibull | 0.500 | 0.500 | **[0.500, 0.500] — DEGENERATE, not a real interval, see note below** | 500 (213/500 = 43% of resamples couldn't even be fit) |
+| Penalized Cox (elastic net) | 0.546 | **0.536** | **[0.467, 0.573]** | 500 (2 resamples failed to fit) |
+| XGBoost AFT | 0.507 | **0.497** | **[0.436, 0.513]** — essentially exactly chance | 500 (1 resample failed to fit) |
+| **Primary hierarchical Bayesian Weibull AFT** | 0.618 | **0.554** | **[0.353, 0.771]** | 100, full 4-chain MCMC (same fitting procedure as the other rows — see note below) |
 
-> **Update — the MAP-vs-full-MCMC asymmetry from the previous version of this table is now resolved.** An earlier
-> run bootstrapped the primary model using MAP point estimates per resample (B=200) rather than the full 4-chain
-> MCMC procedure used for its own apparent C-index — a genuine methodological inconsistency against the other four
-> rows, which were all bootstrapped with the exact same fitting procedure as their own apparent estimate. This has
-> been re-run: **the primary model's row above now uses the SAME full 4-chain, 2000-tune+2000-draw MCMC per
-> resample as its own apparent fit and as how the other four comparators are bootstrapped.** The result changed
-> only slightly (0.588 → 0.591 corrected; CI [0.417, 0.735] → [0.437, 0.725]) — the earlier MAP-based approximation
-> turned out to track the full-MCMC result closely, which is itself a useful robustness check, but the current
-> number is the methodologically correct one and supersedes the earlier one everywhere.
->
-> **One difference remains, stated plainly:** B=100 here, not the B=500 used for the other three bootstrapped
-> comparators. Full-MCMC-per-resample was calibrated at ~73s/resample on this environment (no C compiler
-> available, pure-Python PyTensor fallback); 500 resamples would take ~10.1 hours, so B=100 (~57 min actual
-> wall-clock for this run) was chosen to keep the **fitting method** identical across all five models — which is
-> the comparison that actually matters — while keeping wall-clock time reasonable. B=100 vs. B=500 means this
-> row's CI is somewhat noisier (wider, less stable percentile estimates) than the other bootstrapped rows'; a full
-> B=500 re-run remains possible later as a background job if needed. **Diagnostic quality at B=100, reported
-> honestly:** mean max R-hat across the 100 resamples was 1.022 (above the usual <1.01 target — some individual
-> resamples had convergence issues, expected at this reduced-budget scale) and mean divergences per resample was
-> 87.6 out of 8,000 post-warmup draws (~1.1%). Neither invalidates the result but both are worse than the single
-> reported "apparent" model's own diagnostics (R-hat = 1.00, effectively zero divergences), which used a more
-> carefully monitored single fit rather than 100 unattended refits.
+**Plain-language read of the primary model's own number:** in roughly **55 out of 100 random comparisons between
+two patients where we know who failed first, the model ranked them correctly** — barely better than a coin flip
+on its central estimate, and the 95% interval **[0.353, 0.771] spans from worse-than-chance to fairly strong**.
+This is reported exactly as wide as it is; "the model discriminates" cannot be claimed with confidence at n=8.
 
-**Read exactly as wide as it is, not hidden.** With only 11 confirmed events, every one of these intervals is wide,
-and several cross 0.5 (chance) — including, at its lower bound, the primary model itself: **[0.437, 0.725] spans
-below chance to a fairly strong-looking 0.725.** This is reported in full, not truncated to the point estimate.
-Read across all five models together: the primary model's bootstrap-corrected point estimate (0.591) remains the
-highest of the five, and clearly ahead of the three purely data-driven comparators (0.546, 0.508, 0.500) — now a
-genuinely like-for-like comparison in fitting method (modulo the B=100-vs-500 resample-count note above) — but its
-own 95% interval is wide enough that "the primary model beats chance" cannot be asserted with confidence at this n,
-only that its central estimate is the most favorable among the five models. The null
-(literature-prior-only) model's apparent C-index is actually *below* chance (0.481) on this specific cohort — i.e.
-applying the literature durability ranking directly, with no update from our own data, discriminates our own
-patients' actual event order *worse* than a coin flip. This is a genuine and informative finding: it demonstrates
-concretely why a Bayesian *update* (not a literature-only or a purely data-driven fit) is the right framing here —
-the literature and this cohort's own empirical ordering disagree enough that neither alone is adequate. The
-valve-family-only Weibull's **[0.500, 0.500] must not be read as a precise, well-estimated result** — a zero-width
-interval here means the opposite of confidence: the bootstrap distribution collapsed to a single degenerate point
-because the vast majority of its 500 resamples (131/500, 26%) couldn't even be fit at all (zero events in some
-resampled family), and the resamples that *could* fit produced near-total ties in the risk ranking (hence exactly
-0.500, chance-level, with no spread). This is reported as a genuine methodological finding, not a null result to
-discard: it demonstrates concretely that a per-family Weibull with no pooling is not a viable model at this
-event count, motivating the primary model's hierarchical structure.
+> **B=100 vs. B=500, stated plainly, right next to the table, not in a footnote:** the primary model's row uses
+> B=100 full-4-chain MCMC resamples, not the B=500 used for the other three bootstrapped comparators.
+> Full-MCMC-per-resample was calibrated at ~73s/resample on this environment (no C compiler available, pure-Python
+> PyTensor fallback); 500 resamples would take ~10.1 hours, so B=100 (~2h actual wall-clock) was chosen to keep the
+> **fitting method** identical across all five models — the comparison that actually matters — while keeping
+> wall-clock time reasonable. This means the primary model's CI is somewhat noisier (wider, less stable percentile
+> estimates) than the other bootstrapped rows'. **Diagnostic quality at B=100, reported honestly:** mean max R-hat
+> across the 100 resamples was 1.022 (above the usual <1.01 target — some individual resamples had convergence
+> issues, expected at this reduced-budget scale) and mean divergences per resample was 92.98 out of 8,000
+> post-warmup draws (~1.16%). Neither invalidates the result but both are worse than the single reported
+> "apparent" model's own diagnostics (R-hat = 1.00, 7 divergences), which used a more carefully monitored single
+> fit rather than 100 unattended refits.
+
+**Read exactly as wide as it is, not hidden.** With only 8 confirmed events, every one of these intervals is wide,
+and several cross 0.5 (chance) — including, at its lower bound, the primary model itself. Read across all five
+models together: the primary model's bootstrap-corrected point estimate (0.554) remains the highest of the five,
+and ahead of the three purely data-driven comparators (0.536, 0.497, 0.500) — a genuinely like-for-like comparison
+in fitting method (modulo the B=100-vs-500 resample-count note above) — but its own 95% interval is wide enough
+that "the primary model beats chance" cannot be asserted with confidence at this n, only that its central estimate
+is the most favorable among the five models. The null (literature-prior-only) model's apparent C-index sits
+essentially at chance (0.493) on this specific cohort — applying the literature durability ranking directly, with
+no update from our own data, does not discriminate our own patients' actual event order any better than a coin
+flip. This is a genuine and informative finding: it demonstrates concretely why a Bayesian *update* (not a
+literature-only or a purely data-driven fit) is the right framing here. The valve-family-only Weibull's
+**[0.500, 0.500] must not be read as a precise, well-estimated result** — a zero-width interval here means the
+opposite of confidence: the bootstrap distribution collapsed to a single degenerate point because the majority of
+its 500 resamples (213/500, 43%) couldn't even be fit at all (zero events in some resampled family), and the
+resamples that *could* fit produced near-total ties in the risk ranking (hence exactly 0.500, chance-level, with no
+spread). This is reported as a genuine methodological finding, not a null result to discard: it demonstrates
+concretely that a per-family Weibull with no pooling is not a viable model at this event count, motivating the
+primary model's hierarchical structure.
 
 **Why the null model isn't bootstrapped:** it has zero fitted parameters — its prediction (the literature Weibull
 median per approach) is identical regardless of which patients are resampled, so there is no overfitting for a
 bootstrap correction to remove. Its single apparent C-index is reported as-is.
 
+**Case-level check, as a second, more concrete read on the same result (n=8, indicative only, not statistically
+robust at this sample size):** for each of the 8 confirmed-event patients, checking whether their *actual* event
+time falls inside the model's own 80% credible interval for their predicted median survival time — **3 of 8
+patients' actual events fell inside that interval.** This checks parameter uncertainty on the predicted median,
+not a full individual-level predictive interval (which would be wider), and 3/8 (37.5%) is consistent with — not
+a new surprise on top of — the Level 5 simulation study's own finding that these intervals under-cover their
+nominal rate (48-56% observed vs. 80% nominal, below). One illustrative case: Patient_035 (SAVR 2010, ViV-TAVR
+reintervention documented 2024, i.e. 14 years post-implant) — predicted median 15.2 years, 80% CI [13.1, 19.3] —
+actual event falls inside, close to the predicted median.
+
 Not yet done: repeated stratified 5-fold CV, time-dependent AUC at 5/10 years, integrated Brier score, calibration
-plots against observed cumulative incidence.
-
-### Updated results — primary cohort (5 confirmed events), post pending-reconfirmation decision
-
-In-sample C-index on the new primary (5-event) cohort: primary Bayesian Weibull AFT **0.786**, penalized Cox
-0.543, XGBoost AFT 0.500. **Read with real caution, not as an improvement:** a C-index computed on only 5 events
-is highly unstable — small changes in which 5 patients are confirmed can swing this number substantially, and
-0.786 should not be read as "the model got better" relative to the 10/11-event cohort's 0.611.
-
-**Bootstrap-corrected, 5-event primary cohort (`reports/head_a_bootstrap_frequentist.yaml`,
-`reports/head_a_bootstrap_bayesian.yaml`):**
-
-| Model | Apparent | Bootstrap-corrected | 95% CI | B |
-|---|---|---|---|---|
-| Literature-prior-only (null) | 0.486 | not applicable (0 fitted params) | — | — |
-| Valve-family-only Weibull | 0.500 | 0.500 | **[0.500, 0.500] — DEGENERATE** (213/500 = 43% of resamples couldn't be fit at all, up from 26% on the 10/11-event cohort — fewer events makes this comparator even less viable) | 500 |
-| Penalized Cox (elastic net) | 0.543 | **0.532** | **[0.466, 0.559]** | 500 (18 resamples failed to fit) |
-| XGBoost AFT | 0.500 | **0.494** | **[0.433, 0.529]** — essentially exactly chance | 500 (18 resamples failed to fit) |
-| **Primary hierarchical Bayesian Weibull AFT** | 0.786 | **[PENDING — Bayesian bootstrap still running as of this writing, ETA ~2h from launch, see `reports/head_a_bootstrap_bayesian.yaml` timestamp]** | pending | 100, full 4-chain MCMC |
-
-**Read plainly:** on this reduced cohort, both purely data-driven comparators (Cox, XGBoost) now sit at or below
-chance once bootstrap-corrected (0.532 and 0.494) — a starker version of the same pattern seen on the larger
-cohort, consistent with 5 events being too few to identify any data-driven discrimination at all. The
-valve-family-only model is even more degenerate than before (43% of resamples now fail to fit vs. 26%
-previously). The primary model's own bootstrap-corrected number is not yet available; given the apparent value
-(0.786) is itself unstable at n=5, expect a wide interval once it lands, plausibly wider than the 10/11-event
-cohort's [0.437, 0.725] — this will be updated here the moment the background run completes, not estimated in
-advance.
-
-Sensitivity cohort (9 events, includes the 4 pending patients as events) has not yet been fit as a separate model
-run — the `event_sensitivity_incl_pending`/`t_lower_sensitivity`/`t_upper_sensitivity` columns are ready in
-`data_processed_patient_labels.csv` for this; fitting and comparing against the primary result is the natural next
-step once the primary bootstrap lands, to show explicitly how much the 4 pending patients move the estimate either
-way (Master Prompt §8 Level 5 "definite-only vs. definite+probable" sensitivity analysis).
+plots against observed cumulative incidence, a separate fit of the sensitivity label columns
+(`event_sensitivity_incl_pending`) — moot now that primary and sensitivity coincide at 8 events with zero patients
+pending.
 
 ## Level 4 — Leakage controls (done)
 
@@ -352,21 +310,19 @@ no reconstruction was attempted against fabricated coordinates. Two concrete thi
   to get a near-null result, not as a validated risk-factor importance.
 - Per-patient waterfall decomposition and a clinician-facing HTML report generator (Section 7's full spec) are
   designed but not implemented as standalone artifacts in this build.
-- Every explainability output carries the mandatory disclaimer: associations only, from n=99, 5-9 events, not
+- Every explainability output carries the mandatory disclaimer: associations only, from n=99 patients/8 events, not
   causal effects.
-- **Both plot images above (`head_a_forest_plot.png`, `head_a_shap_summary.png`) were generated from the
-  10/11-event cohort's posterior/model and have not yet been regenerated for the new 5-event primary cohort** —
-  the underlying numbers changed (see "Updated results" above); the images themselves are stale pending a
-  re-generation pass once the primary bootstrap finishes. Not deleted, so the before/after is visible, but not to
-  be cited as current without checking `reports/head_a_posterior.nc`'s timestamp first.
+- **Both plot images above (`head_a_forest_plot.png`, `head_a_shap_summary.png`) were regenerated 2026-09-17 from
+  the final physician-confirmed 8-event cohort's posterior/model** — current as of this commit; check
+  `reports/head_a_posterior.nc`'s timestamp if verifying freshness later.
 
 ## Definition-of-done checklist (Master Prompt §12)
 
 | Item | Status |
 |---|---|
-| Reintervention detector F1 ≥ 0.90 vs. physician adjudication | **1.000 on the 19-patient seed set**; full 117-patient adjudication pending |
-| Head A posterior diagnostics pass | Done — R-hat 1.00, ESS in thousands |
-| All comparators + validation levels reported with intervals | Comparators done with bootstrap-corrected CIs; Levels 1/2/3/4 done, Level 5 simulation done (sensitivity analyses + Guyot external calibration still pending real digitized data) |
+| Reintervention detector F1 ≥ 0.90 vs. physician adjudication | **1.000 on the 19-patient seed set** (anchored review); **0.889 on the full 117-patient blind adjudication** (precision 0.800, recall 1.000 — 8/8 true events found, 2 false positives caught by physician review and corrected) — stated honestly as falling short of the ≥0.90 target on the harder, blind full-cohort check, not just the easier anchored one. See Level 1 above for the anchored-vs-blind discrepancy discussion. |
+| Head A posterior diagnostics pass | Done — R-hat 1.00, 7 divergences/8000 draws, final 8-event cohort |
+| All comparators + validation levels reported with intervals | Done — Levels 1-5 complete on the final 8-event cohort, including the primary model's own bootstrap-corrected CI (sensitivity analyses beyond definite/possible + Guyot external calibration still pending real digitized data) |
 | Head B passes all unit tests, traceable rule log | Done — 13/13 tests pass, every label carries source-sentence evidence |
 | Every extracted value/label traceable to a source sentence | Done, by construction in `pipeline.py`/`extract_core.py` |
 | Four markdown docs complete, consistent, state limitations | Done — see README.md, protocol/study_protocol.md, model/approach.md, data/data_plan.md |
